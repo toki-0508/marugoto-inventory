@@ -48,6 +48,8 @@ function doPost(e) {
     switch (body.action) {
       case 'addTransaction':       return addTransaction(body.payload);
       case 'addItem':              return addItem(body.payload);
+      case 'updateItem':           return updateItem(body.payload);
+      case 'deleteItem':           return deleteItem(body.payload);
       case 'addRequest':           return addRequest(body.payload);
       case 'updateRequestStatus':  return updateRequestStatus(body.payload);
       default:                     return { error: 'unknown action: ' + body.action };
@@ -71,6 +73,17 @@ function _sheet(name) {
     throw new Error(`シート「${name}」が見つかりません。Apps Script の setupSheets() を一度実行してください。`);
   }
   return sheet;
+}
+
+// 既存 ID の最大値 + 1 を返す（行削除があっても衝突しない）
+function _nextId(sheet) {
+  const data = sheet.getDataRange().getValues();
+  let max = 0;
+  for (let i = 1; i < data.length; i++) {
+    const id = Number(data[i][0]);
+    if (!isNaN(id) && id > max) max = id;
+  }
+  return max + 1;
 }
 
 /**
@@ -177,7 +190,7 @@ function addTransaction(p) {
     return { error: 'invalid payload' };
   }
   const sheet = _sheet(TX_SHEET);
-  const newId = sheet.getLastRow();   // header=1 行目なので、次の id は現在の lastRow と一致
+  const newId = _nextId(sheet);
   sheet.appendRow([
     newId, Number(p.item_id), p.type, Number(p.quantity),
     p.target, new Date(), p.memo || ''
@@ -188,12 +201,43 @@ function addTransaction(p) {
 function addItem(p) {
   if (!p || !p.name) return { error: 'invalid payload' };
   const sheet = _sheet(ITEMS_SHEET);
-  const newId = sheet.getLastRow();
+  const newId = _nextId(sheet);
   sheet.appendRow([
     newId, p.name, p.category || '', Number(p.total_quantity) || 0,
     p.note || '', p.image || ''
   ]);
   return { success: true, id: newId };
+}
+
+function updateItem(p) {
+  if (!p || !p.id) return { error: 'invalid payload' };
+  const sheet = _sheet(ITEMS_SHEET);
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][0] == p.id) {
+      const row = i + 1;
+      if (p.name           !== undefined) sheet.getRange(row, 2).setValue(p.name);
+      if (p.category       !== undefined) sheet.getRange(row, 3).setValue(p.category);
+      if (p.total_quantity !== undefined) sheet.getRange(row, 4).setValue(Number(p.total_quantity) || 0);
+      if (p.note           !== undefined) sheet.getRange(row, 5).setValue(p.note);
+      if (p.image          !== undefined) sheet.getRange(row, 6).setValue(p.image);
+      return { success: true };
+    }
+  }
+  return { error: 'item not found' };
+}
+
+function deleteItem(p) {
+  if (!p || !p.id) return { error: 'invalid payload' };
+  const sheet = _sheet(ITEMS_SHEET);
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][0] == p.id) {
+      sheet.deleteRow(i + 1);
+      return { success: true };
+    }
+  }
+  return { error: 'item not found' };
 }
 
 function getRequests() {
@@ -231,7 +275,7 @@ function addRequest(p) {
   if (!item_name) return { error: 'item not found' };
 
   const sheet = _sheet(REQ_SHEET);
-  const newId = sheet.getLastRow();
+  const newId = _nextId(sheet);
   sheet.appendRow([
     newId, Number(p.item_id), item_name, Number(p.quantity),
     p.organization, p.user_name, p.purpose,
@@ -254,17 +298,13 @@ function getRequestDetail(id) {
         status: v[7] || 'pending',
         created_at:   v[8]  instanceof Date ? v[8].toISOString()  : String(v[8]  || ''),
         processed_at: v[9]  instanceof Date ? v[9].toISOString()  : String(v[9]  || ''),
-        memo: v[10] || ''
+        memo: v[10] || '',
+        email: v[11] || ''
       };
       break;
     }
   }
   if (!r) return { error: 'request not found' };
-
-  // email カラム（L列）を追加で読む
-  for (let i = 1; i < values.length; i++) {
-    if (values[i][0] == id) { r.email = values[i][11] || ''; break; }
-  }
 
   const tag = '申請#' + r.id;
   const tx = _sheet(TX_SHEET).getDataRange().getValues();
@@ -303,7 +343,7 @@ function updateRequestStatus(p) {
   // 受け渡し完了 → lend、返却完了 → return を自動記録
   if (p.status === 'received' || p.status === 'returned') {
     const txSheet = _sheet(TX_SHEET);
-    const newId = txSheet.getLastRow();
+    const newId = _nextId(txSheet);
     const target = `${row[4]}（${row[5]}）`; // organization (user_name)
     const isReturn = p.status === 'returned';
     txSheet.appendRow([

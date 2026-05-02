@@ -48,6 +48,20 @@ const Mock = (() => {
       items.push({ id: newId, ...payload, image: payload.image || '' });
       return Promise.resolve({ success: true, id: newId });
     },
+    updateItem: payload => {
+      const it = items.find(x => x.id === Number(payload.id));
+      if (!it) return Promise.resolve({ error: 'not found' });
+      ['name', 'category', 'total_quantity', 'note', 'image'].forEach(k => {
+        if (payload[k] !== undefined) it[k] = (k === 'total_quantity') ? Number(payload[k]) : payload[k];
+      });
+      return Promise.resolve({ success: true });
+    },
+    deleteItem: payload => {
+      const idx = items.findIndex(x => x.id === Number(payload.id));
+      if (idx < 0) return Promise.resolve({ error: 'not found' });
+      items.splice(idx, 1);
+      return Promise.resolve({ success: true });
+    },
     getLogs: () => Promise.resolve({
       logs: [...tx].reverse().map(t => ({
         ...t,
@@ -136,6 +150,8 @@ const Api = {
   getLogs()         { return this._useMock() ? Mock.getLogs()         : this._get('getLogs'); },
   addTransaction(p) { return this._useMock() ? Mock.addTransaction(p) : this._post('addTransaction', p); },
   addItem(p)        { return this._useMock() ? Mock.addItem(p)        : this._post('addItem', p); },
+  updateItem(p)     { return this._useMock() ? Mock.updateItem(p)     : this._post('updateItem', p); },
+  deleteItem(p)     { return this._useMock() ? Mock.deleteItem(p)     : this._post('deleteItem', p); },
   getRequests()       { return this._useMock() ? Mock.getRequests()        : this._get('getRequests'); },
   getRequestDetail(id){ return this._useMock() ? Mock.getRequestDetail(id) : this._get('getRequestDetail', { id }); },
   addRequest(p)       { return this._useMock() ? Mock.addRequest(p)        : this._post('addRequest', p); },

@@ -234,6 +234,7 @@ routes.home = async () => {
 // ====================================================================
 routes.detail = async ({ id }) => {
   setHeader('物品詳細', true);
+  setTabActive('home');
   view.innerHTML = `<div class="empty">読み込み中…</div>`;
   const { item, error } = await Api.getItemDetail(id);
   if (error || !item) { view.innerHTML = `<div class="empty">読み込みに失敗</div>`; return; }
@@ -251,13 +252,12 @@ routes.detail = async ({ id }) => {
         return `
           <tr>
             <td class="date">${dateStr}</td>
-            <td>${t.type === 'lend' ? '受け渡し' : '返却完了'}</td>
             <td><span class="tag ${t.type}">${t.type === 'lend' ? '貸出' : '返却'}</span></td>
             <td>${escape(t.target)}</td>
             <td class="qty">${t.quantity}</td>
           </tr>`;
       }).join('')
-    : `<tr><td colspan="5" class="empty-msg" style="text-align:center">履歴なし</td></tr>`;
+    : `<tr><td colspan="4" class="empty-msg" style="text-align:center">履歴なし</td></tr>`;
 
   view.innerHTML = `
     <div class="detail-hero">
@@ -286,7 +286,24 @@ routes.detail = async ({ id }) => {
       <h3>履歴</h3>
       <table class="history-table">${histRows}</table>
     </div>
+
+    <div class="req-action-row">
+      <button class="btn-handover" id="editBtn">編集</button>
+      <button class="btn-reject" id="deleteBtn">削除</button>
+    </div>
   `;
+
+  view.querySelector('#editBtn').addEventListener('click', () =>
+    go('editItem', { id: item.id })
+  );
+  view.querySelector('#deleteBtn').addEventListener('click', async () => {
+    if (!confirm(`「${item.name}」を削除しますか？\n\n貸出履歴・申請データはそのまま残ります。\nこの操作は取り消せません。`)) return;
+    const r = await Api.deleteItem({ id: item.id });
+    if (r.error) { showToast('エラー: ' + r.error); return; }
+    showToast('削除しました');
+    State.items = [];
+    go('home');
+  });
 };
 
 // ====================================================================
@@ -423,6 +440,7 @@ routes.requests = async () => {
 // ====================================================================
 routes.reqDetail = async ({ id }) => {
   setHeader('申請詳細', true);
+  setTabActive('requests');
   view.innerHTML = `<div class="empty">読み込み中…</div>`;
   const { request: r, error } = await Api.getRequestDetail(id);
   if (error || !r) { view.innerHTML = `<div class="empty">読み込みに失敗</div>`; return; }
@@ -616,10 +634,133 @@ routes.add = async () => {
 };
 
 // ====================================================================
+// 5b. 物品編集
+// ====================================================================
+routes.editItem = async ({ id }) => {
+  setHeader('物品の編集', true);
+  setTabActive('home');
+  view.innerHTML = `<div class="empty">読み込み中…</div>`;
+
+  if (!State.items.length) {
+    const { items = [] } = await Api.getItems();
+    State.items = items;
+  }
+  const cats = [...new Set(State.items.map(i => i.category).filter(Boolean))];
+
+  const { item, error } = await Api.getItemDetail(id);
+  if (error || !item) { view.innerHTML = `<div class="empty">読み込みに失敗</div>`; return; }
+
+  // カテゴリが既存リストに無い場合も自動で追加表示
+  if (item.category && !cats.includes(item.category)) cats.unshift(item.category);
+
+  view.innerHTML = `
+    <form class="form-page" id="editForm">
+      <label>商品画像</label>
+      <input type="file" id="imgFile" accept="image/*" hidden />
+      <label for="imgFile" class="image-drop" id="imgDrop">
+        <span class="placeholder">
+          <span class="ic">📷</span>
+          <span>タップして画像を選択（任意）</span>
+        </span>
+        <img id="imgPreview" alt="" hidden />
+        <button type="button" id="imgClear" class="img-clear" hidden>×</button>
+      </label>
+
+      <label>物品名<span class="req">*</span></label>
+      <input name="name" required value="${escape(item.name)}" />
+
+      <label>カテゴリ<span class="req">*</span></label>
+      <select name="category" required>
+        <option value="">選択してください</option>
+        ${cats.map(c => `<option ${c === item.category ? 'selected' : ''}>${escape(c)}</option>`).join('')}
+        <option value="__new">＋ 新しいカテゴリ</option>
+      </select>
+      <input name="categoryNew" placeholder="新しいカテゴリ名" hidden style="margin-top:6px" />
+
+      <label>総数<span class="req">*</span></label>
+      <input name="total_quantity" type="number" min="0" required value="${item.total_quantity}" />
+
+      <label>備考</label>
+      <textarea name="note" rows="2">${escape(item.note || '')}</textarea>
+
+      <button class="btn-primary" type="submit">更新する</button>
+    </form>
+  `;
+
+  const f = view.querySelector('#editForm');
+  f.category.addEventListener('change', () => {
+    f.categoryNew.hidden = f.category.value !== '__new';
+  });
+
+  // 画像ピッカー（既存画像をプリセット）
+  const fileInput = view.querySelector('#imgFile');
+  const preview = view.querySelector('#imgPreview');
+  const placeholder = view.querySelector('#imgDrop .placeholder');
+  const clearBtn = view.querySelector('#imgClear');
+  let imageDataUrl = item.image || '';
+
+  const setPreview = url => {
+    imageDataUrl = url;
+    if (url) {
+      preview.src = url; preview.hidden = false;
+      placeholder.style.display = 'none';
+      clearBtn.hidden = false;
+    } else {
+      preview.src = ''; preview.hidden = true;
+      placeholder.style.display = '';
+      clearBtn.hidden = true;
+    }
+  };
+  if (imageDataUrl) setPreview(imageDataUrl);
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('画像ファイルを選択してください'); return;
+    }
+    try {
+      const dataUrl = await resizeImage(file);
+      setPreview(dataUrl);
+    } catch (err) {
+      showToast('画像の読み込みに失敗しました');
+    }
+  });
+  clearBtn.addEventListener('click', e => {
+    e.preventDefault(); e.stopPropagation();
+    fileInput.value = '';
+    setPreview('');
+  });
+
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const cat = f.category.value === '__new' ? f.categoryNew.value.trim() : f.category.value;
+    const payload = {
+      id: item.id,
+      name: f.name.value.trim(),
+      category: cat,
+      total_quantity: Number(f.total_quantity.value),
+      note: f.note.value.trim(),
+      image: imageDataUrl,
+    };
+    if (!payload.name || !payload.category) return;
+    const btn = f.querySelector('.btn-primary');
+    btn.disabled = true; btn.textContent = '更新中…';
+    const r = await Api.updateItem(payload);
+    btn.disabled = false; btn.textContent = '更新する';
+    if (r.error) { showToast('エラー: ' + r.error); return; }
+    showToast('更新しました');
+    State.items = [];
+    go('detail', { id: item.id });
+  });
+};
+
+// ====================================================================
 // 6. 全体ログ
 // ====================================================================
 routes.log = async () => {
   setHeader('全体ログ', true);
+  setTabActive('');
   view.innerHTML = `
     <div class="search-bar">
       <div class="search-icon" style="flex:1;display:flex"><input id="lq" placeholder="物品名・団体名・利用者名で検索" /></div>
