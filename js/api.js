@@ -66,6 +66,7 @@ const Mock = (() => {
         organization: payload.organization,
         user_name: payload.user_name,
         purpose: payload.purpose,
+        email: payload.email || '',
         status: 'pending',
         created_at: new Date().toISOString(),
         processed_at: '',

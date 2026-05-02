@@ -613,6 +613,54 @@ main { flex: 1; padding: 12px 14px 90px; }
   text-decoration: none;
 }
 
+/* ---------- Comment modal ---------- */
+.comment-modal {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.comment-modal-card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 22px 20px 18px;
+  width: 100%; max-width: 420px;
+  box-shadow: 0 20px 50px rgba(0,0,0,.25);
+}
+.comment-modal h3 { margin: 0 0 6px; font-size: 17px; }
+.comment-modal .cm-desc {
+  color: var(--sub); font-size: 13px;
+  margin: 0 0 12px; line-height: 1.6;
+}
+.comment-modal textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 90px;
+}
+.comment-modal-actions {
+  display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end;
+}
+.comment-modal-actions button {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 700;
+}
+.comment-modal-actions button:not(.primary) {
+  background: #f3f4f6; color: var(--text);
+}
+.comment-modal-actions button.primary {
+  background: var(--accent); color: #fff;
+}
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed;

@@ -157,10 +157,11 @@
       quantity:     Number(form.quantity.value),
       organization: form.organization.value.trim(),
       user_name:    form.user_name.value.trim(),
+      email:        form.email.value.trim(),
       purpose:      form.purpose.value.trim(),
     };
     if (!payload.item_id || !payload.quantity || !payload.organization
-        || !payload.user_name || !payload.purpose) return;
+        || !payload.user_name || !payload.email || !payload.purpose) return;
 
     const btn = form.querySelector('.btn-primary');
     btn.disabled = true; btn.textContent = '送信中…';

@@ -26,6 +26,70 @@ const showToast = msg => {
   showToast._t = setTimeout(() => { toast.hidden = true; }, 1800);
 };
 
+// コメント入力モーダル（Promise を返す）
+function askComment(opts) {
+  return new Promise(resolve => {
+    const modal     = document.getElementById('commentModal');
+    const titleEl   = document.getElementById('cmTitle');
+    const descEl    = document.getElementById('cmDesc');
+    const input     = document.getElementById('cmInput');
+    const cancelBtn = document.getElementById('cmCancel');
+    const okBtn     = document.getElementById('cmConfirm');
+
+    titleEl.textContent = opts.title || '';
+    descEl.textContent  = opts.desc  || '';
+    input.placeholder   = opts.placeholder || '';
+    input.value         = '';
+    okBtn.textContent   = opts.okLabel || '確定';
+    modal.hidden = false;
+    setTimeout(() => input.focus(), 50);
+
+    const cleanup = () => {
+      modal.hidden = true;
+      cancelBtn.onclick = null;
+      okBtn.onclick = null;
+    };
+    cancelBtn.onclick = () => { cleanup(); resolve(null); };
+    okBtn.onclick = () => {
+      const v = input.value.trim();
+      if (opts.required && !v) {
+        showToast('入力してください');
+        return;
+      }
+      cleanup();
+      resolve(v);
+    };
+  });
+}
+
+// アクション → コメント要否を判定して実行
+async function performAction(act, id) {
+  let memo = '';
+  if (act === 'ready') {
+    const m = await askComment({
+      title: '申請を承認する',
+      desc: '受け取りの場所・日時などを入力してください。利用者にメールで通知されます。',
+      placeholder: '例) 5/3 14:00 体育館前で受け取り\n返却は5/4 17:00までに同じ場所',
+      okLabel: '承認する',
+    });
+    if (m === null) return null;  // キャンセル
+    memo = m;
+  } else if (act === 'rejected') {
+    const m = await askComment({
+      title: '申請を却下する',
+      desc: '却下理由を入力してください。利用者にメールで通知されます。',
+      placeholder: '例) 同日に他の予約があります',
+      okLabel: '却下する',
+      required: true,
+    });
+    if (m === null) return null;
+    memo = m;
+  } else {
+    if (!confirm(`この申請を「${ACTION_LABEL[act]}」にしますか？`)) return null;
+  }
+  return Api.updateRequestStatus({ id, status: act, memo });
+}
+
 const setTabActive = name => {
   tabs.forEach(t => t.classList.toggle('active', t.dataset.go === name));
 };
@@ -326,10 +390,11 @@ routes.requests = async () => {
         b.addEventListener('click', async e => {
           e.stopPropagation();
           const act = b.dataset.act;
-          if (!confirm(`この申請を「${ACTION_LABEL[act]}」にしますか？`)) return;
           b.disabled = true;
-          const res = await Api.updateRequestStatus({ id, status: act });
-          if (res.error) { showToast('エラー: ' + res.error); b.disabled = false; return; }
+          const res = await performAction(act, id);
+          b.disabled = false;
+          if (res === null) return;
+          if (res.error) { showToast('エラー: ' + res.error); return; }
           showToast(ACTION_LABEL[act] + ' しました');
           const { requests: fresh = [] } = await Api.getRequests();
           requests.length = 0;
@@ -402,8 +467,9 @@ routes.reqDetail = async ({ id }) => {
       <table class="kv-table">
         <tr><td>団体名</td><td>${escape(r.organization)}</td></tr>
         <tr><td>利用者</td><td>${escape(r.user_name)}</td></tr>
+        <tr><td>メール</td><td>${escape(r.email || '-')}</td></tr>
         <tr><td>用途</td><td>${escape(r.purpose)}</td></tr>
-        <tr><td>備考</td><td>${escape(r.memo || '-')}</td></tr>
+        <tr><td>管理者コメント</td><td>${escape(r.memo || '-')}</td></tr>
       </table>
     </div>
 
@@ -424,10 +490,11 @@ routes.reqDetail = async ({ id }) => {
   view.querySelectorAll('button[data-act]').forEach(b => {
     b.addEventListener('click', async () => {
       const act = b.dataset.act;
-      if (!confirm(`この申請を「${ACTION_LABEL[act]}」にしますか？`)) return;
       b.disabled = true;
-      const res = await Api.updateRequestStatus({ id: r.id, status: act });
-      if (res.error) { showToast('エラー: ' + res.error); b.disabled = false; return; }
+      const res = await performAction(act, r.id);
+      b.disabled = false;
+      if (res === null) return;
+      if (res.error) { showToast('エラー: ' + res.error); return; }
       showToast(ACTION_LABEL[act] + ' しました');
       State.items = [];
       routes.reqDetail({ id: r.id });

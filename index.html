@@ -34,6 +34,18 @@
 
   <div id="toast" class="toast" hidden></div>
 
+  <div class="comment-modal" id="commentModal" hidden>
+    <div class="comment-modal-card">
+      <h3 id="cmTitle">タイトル</h3>
+      <p id="cmDesc" class="cm-desc"></p>
+      <textarea id="cmInput" rows="4"></textarea>
+      <div class="comment-modal-actions">
+        <button type="button" id="cmCancel">キャンセル</button>
+        <button type="button" id="cmConfirm" class="primary">確定</button>
+      </div>
+    </div>
+  </div>
+
   <script src="./js/config.js"></script>
   <script src="./js/config.local.js" onerror=""></script>
   <script src="./js/api.js"></script>

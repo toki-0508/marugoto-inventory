@@ -9,7 +9,8 @@
  *      A1: id  B1: item_id  C1: type  D1: quantity  E1: target  F1: timestamp  G1: memo
  *    シート名: requests
  *      A1: id  B1: item_id  C1: item_name  D1: quantity  E1: organization
- *      F1: user_name  G1: purpose  H1: status  I1: created_at  J1: processed_at  K1: memo
+ *      F1: user_name  G1: purpose  H1: status  I1: created_at  J1: processed_at
+ *      K1: memo  L1: email
  *
  * 2) Apps Script エディタを開いて、このファイルの中身を貼り付ける
  *
@@ -82,15 +83,19 @@ function setupSheets() {
   const ensure = (name, headers) => {
     let s = ss.getSheetByName(name);
     if (!s) s = ss.insertSheet(name);
-    if (s.getLastRow() === 0) {
+    const lastCol = s.getLastColumn();
+    if (lastCol === 0) {
       s.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
       s.setFrozenRows(1);
+    } else if (lastCol < headers.length) {
+      const add = headers.slice(lastCol);
+      s.getRange(1, lastCol + 1, 1, add.length).setValues([add]).setFontWeight('bold');
     }
   };
   ensure(ITEMS_SHEET, ['id', 'name', 'category', 'total_quantity', 'note', 'image']);
   ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo']);
   ensure(REQ_SHEET,   ['id', 'item_id', 'item_name', 'quantity', 'organization', 'user_name',
-                       'purpose', 'status', 'created_at', 'processed_at', 'memo']);
+                       'purpose', 'status', 'created_at', 'processed_at', 'memo', 'email']);
   return 'Done';
 }
 
@@ -197,7 +202,7 @@ function getRequests() {
   const list = [];
   for (let i = 1; i < values.length; i++) {
     const [id, item_id, item_name, qty, organization, user_name, purpose,
-           status, created_at, processed_at, memo] = values[i];
+           status, created_at, processed_at, memo, email] = values[i];
     if (!id) continue;
     list.push({
       id, item_id, item_name,
@@ -206,7 +211,8 @@ function getRequests() {
       status: status || 'pending',
       created_at:   created_at   instanceof Date ? created_at.toISOString()   : String(created_at || ''),
       processed_at: processed_at instanceof Date ? processed_at.toISOString() : String(processed_at || ''),
-      memo: memo || ''
+      memo: memo || '',
+      email: email || ''
     });
   }
   return { requests: list.reverse() };
@@ -229,7 +235,7 @@ function addRequest(p) {
   sheet.appendRow([
     newId, Number(p.item_id), item_name, Number(p.quantity),
     p.organization, p.user_name, p.purpose,
-    'pending', new Date(), '', ''
+    'pending', new Date(), '', '', p.email || ''
   ]);
   return { success: true, id: newId };
 }
@@ -254,6 +260,11 @@ function getRequestDetail(id) {
     }
   }
   if (!r) return { error: 'request not found' };
+
+  // email カラム（L列）を追加で読む
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][0] == id) { r.email = values[i][11] || ''; break; }
+  }
 
   const tag = '申請#' + r.id;
   const tx = _sheet(TX_SHEET).getDataRange().getValues();
@@ -301,7 +312,55 @@ function updateRequestStatus(p) {
       `申請#${row[0]}${isReturn ? ' 返却' : ''}`
     ]);
   }
+
+  // 承認 (ready) / 却下 (rejected) のときメール通知
+  if (p.status === 'ready' || p.status === 'rejected') {
+    const email = row[11] || '';
+    if (email) {
+      try {
+        sendStatusEmail({
+          to: email,
+          status: p.status,
+          requesterName: row[5],
+          itemName: row[2],
+          quantity: row[3],
+          organization: row[4],
+          adminComment: p.memo || ''
+        });
+      } catch (e) {
+        // メール失敗してもステータス更新は成功扱い
+      }
+    }
+  }
+
   return { success: true };
+}
+
+function sendStatusEmail(o) {
+  const isApprove = o.status === 'ready';
+  const subject = isApprove
+    ? '【まるごと祭 物品管理】申請が承認されました'
+    : '【まるごと祭 物品管理】申請が却下されました';
+  const lines = [];
+  lines.push(`${o.requesterName} 様`);
+  lines.push('');
+  lines.push(isApprove ? '以下の物品申請が承認されました。' : '以下の物品申請は却下されました。');
+  lines.push('');
+  lines.push(`物品 : ${o.itemName}`);
+  lines.push(`数量 : ${o.quantity}`);
+  lines.push(`団体 : ${o.organization}`);
+  lines.push('');
+  if (o.adminComment) {
+    lines.push(isApprove ? '【受け取りについて】' : '【却下理由】');
+    lines.push(o.adminComment);
+    lines.push('');
+  }
+  if (isApprove) {
+    lines.push('上記の指示に従って受け取りに来てください。');
+    lines.push('');
+  }
+  lines.push('-- まるごと祭 物品管理');
+  MailApp.sendEmail(o.to, subject, lines.join('\n'));
 }
 
 function getLogs() {
