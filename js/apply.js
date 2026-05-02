@@ -82,7 +82,7 @@
       <span class="label">${escape(item.name)}（在庫 ${item.current_quantity}）</span>
       <span class="arrow">▼</span>
     `;
-    pickerModal.hidden = true;
+    hidePicker();
     validateQty();
   };
 
@@ -101,17 +101,24 @@
     );
   };
 
+  // 起動時に必ず非表示にしておく（キャッシュ等の保険）
+  pickerModal.hidden = true;
+  pickerModal.style.display = 'none';
+
+  const showPicker = () => { pickerModal.hidden = false; pickerModal.style.display = 'flex'; };
+  const hidePicker = () => { pickerModal.hidden = true;  pickerModal.style.display = 'none'; };
+
   pickerBtn.addEventListener('click', () => {
     if (!allItems.length) { showToast('利用可能な物品がありません'); return; }
     pickerSearch.value = '';
     curCat = '';
     pickerCats.querySelectorAll('.pill').forEach((p, i) =>
       p.classList.toggle('active', i === 0));
-    pickerModal.hidden = false;
+    showPicker();
     renderList();
     setTimeout(() => pickerSearch.focus(), 50);
   });
-  pickerClose.addEventListener('click', () => { pickerModal.hidden = true; });
+  pickerClose.addEventListener('click', hidePicker);
   pickerSearch.addEventListener('input', renderList);
 
   // ---- 個数バリデーション ----

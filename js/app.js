@@ -42,10 +42,12 @@ function askComment(opts) {
     input.value         = '';
     okBtn.textContent   = opts.okLabel || '確定';
     modal.hidden = false;
+    modal.style.display = 'flex';
     setTimeout(() => input.focus(), 50);
 
     const cleanup = () => {
       modal.hidden = true;
+      modal.style.display = 'none';
       cancelBtn.onclick = null;
       okBtn.onclick = null;
     };
@@ -61,6 +63,12 @@ function askComment(opts) {
     };
   });
 }
+
+// 起動時にモーダルを必ず非表示にしておく（キャッシュ等の保険）
+(() => {
+  const m = document.getElementById('commentModal');
+  if (m) { m.hidden = true; m.style.display = 'none'; }
+})();
 
 // アクション → コメント要否を判定して実行
 async function performAction(act, id) {
