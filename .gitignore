@@ -1,0 +1,11 @@
+# 個人設定（GAS URL / スプレッドシート URL）
+js/config.local.js
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
