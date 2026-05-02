@@ -1,6 +1,9 @@
 # 個人設定（GAS URL / スプレッドシート URL）
 js/config.local.js
 
+# Claude Code ローカル設定
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
