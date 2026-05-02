@@ -63,7 +63,35 @@ function _respond(fn) {
 }
 
 function _sheet(name) {
-  return SpreadsheetApp.openById(SHEET_ID).getSheetByName(name);
+  if (!SHEET_ID) throw new Error('SHEET_ID が未設定です。Code.gs の冒頭にスプレッドシート ID を入れてください。');
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    throw new Error(`シート「${name}」が見つかりません。Apps Script の setupSheets() を一度実行してください。`);
+  }
+  return sheet;
+}
+
+/**
+ * 必要な 3 シートをヘッダ付きで自動作成する。
+ * Apps Script のエディタで関数選択 → 実行ボタンを押すだけ。
+ */
+function setupSheets() {
+  if (!SHEET_ID) throw new Error('SHEET_ID が未設定です');
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const ensure = (name, headers) => {
+    let s = ss.getSheetByName(name);
+    if (!s) s = ss.insertSheet(name);
+    if (s.getLastRow() === 0) {
+      s.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+      s.setFrozenRows(1);
+    }
+  };
+  ensure(ITEMS_SHEET, ['id', 'name', 'category', 'total_quantity', 'note', 'image']);
+  ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo']);
+  ensure(REQ_SHEET,   ['id', 'item_id', 'item_name', 'quantity', 'organization', 'user_name',
+                       'purpose', 'status', 'created_at', 'processed_at', 'memo']);
+  return 'Done';
 }
 
 function getItems() {
