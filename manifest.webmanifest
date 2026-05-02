@@ -1,6 +1,6 @@
 {
-  "name": "まるごと祭 物品管理",
-  "short_name": "物品管理",
+  "name": "まるごと祭物品管理",
+  "short_name": "まるごと祭物品管理",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
