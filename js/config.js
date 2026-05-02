@@ -1,4 +1,5 @@
-// 共有テンプレート（GitHub に公開される）
-// 個人ごとの実値は js/config.local.js に書く（gitignore 済み）
+// Google Apps Script のウェブアプリ URL
 window.GAS_URL = '';
-window.SHEET_URL = '';
+
+// バックエンドのスプレッドシート URL（管理画面の「📄」ボタンで開く）
+window.SHEET_URL = 'https://docs.google.com/spreadsheets/d/1Vwms7ByBkeVTKmKlsA-p0zvBP2cke_MqjpSGppoEjbU/edit';
