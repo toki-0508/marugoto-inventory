@@ -354,9 +354,13 @@ function updateRequestStatus(p) {
   }
 
   // 承認 (ready) / 却下 (rejected) のときメール通知
+  let mail_status = 'skipped';
+  let mail_error = '';
   if (p.status === 'ready' || p.status === 'rejected') {
     const email = row[11] || '';
-    if (email) {
+    if (!email) {
+      mail_status = 'no_email';
+    } else {
       try {
         sendStatusEmail({
           to: email,
@@ -367,13 +371,28 @@ function updateRequestStatus(p) {
           organization: row[4],
           adminComment: p.memo || ''
         });
+        mail_status = 'sent';
       } catch (e) {
-        // メール失敗してもステータス更新は成功扱い
+        mail_status = 'failed';
+        mail_error = String(e && e.message || e);
+        console.error('Email send failed:', mail_error);
       }
     }
   }
 
-  return { success: true };
+  return { success: true, mail_status: mail_status, mail_error: mail_error };
+}
+
+/**
+ * メール送信テスト用。Apps Script のエディタで関数選択 → 実行。
+ * 初回は MailApp の権限承認ダイアログが出る → 許可してください。
+ * 自分のメールアドレス宛にテストメールが届けば OK。
+ */
+function testEmail() {
+  const me = Session.getActiveUser().getEmail();
+  if (!me) throw new Error('実行ユーザーのメールアドレスが取得できません');
+  MailApp.sendEmail(me, '【テスト】まるごと祭 物品管理', 'メール送信が正しく動いています。');
+  return 'sent to ' + me;
 }
 
 function sendStatusEmail(o) {

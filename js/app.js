@@ -420,7 +420,11 @@ routes.requests = async () => {
           b.disabled = false;
           if (res === null) return;
           if (res.error) { showToast('エラー: ' + res.error); return; }
-          showToast(ACTION_LABEL[act] + ' しました');
+          showToast(ACTION_LABEL[act] + ' しました' + (
+            res.mail_status === 'sent'     ? '（メール送信済）' :
+            res.mail_status === 'no_email' ? '（メール: 宛先なし）' :
+            res.mail_status === 'failed'   ? '（メール失敗: ' + (res.mail_error || '') + '）' : ''
+          ));
           const { requests: fresh = [] } = await Api.getRequests();
           requests.length = 0;
           fresh.forEach(x => requests.push(x));
