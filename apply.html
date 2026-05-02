@@ -21,9 +21,11 @@
       <input name="user_name" required placeholder="例) 山田 太郎" />
 
       <label>物品<span class="req">*</span></label>
-      <select name="item_id" required>
-        <option value="">選択してください</option>
-      </select>
+      <button type="button" class="item-picker-btn" id="itemPickerBtn">
+        <span class="ph">物品を選択してください</span>
+        <span class="arrow">▼</span>
+      </button>
+      <input type="hidden" name="item_id" id="itemIdInput" />
 
       <label>個数<span class="req">*</span></label>
       <input name="quantity" type="number" min="1" required inputmode="numeric" placeholder="例) 10" />
@@ -44,6 +46,18 @@
   </main>
 
   <div id="toast" class="toast" hidden></div>
+
+  <div class="picker-modal" id="pickerModal" hidden>
+    <div class="picker-header">
+      <h2>物品を選択</h2>
+      <button type="button" class="picker-close" id="pickerClose">×</button>
+    </div>
+    <div class="picker-search">
+      <input id="pickerSearch" placeholder="物品名で検索" />
+    </div>
+    <div class="picker-cats" id="pickerCats"></div>
+    <div class="picker-list" id="pickerList"></div>
+  </div>
 
   <script src="./js/config.js"></script>
   <script src="./js/config.local.js" onerror=""></script>
