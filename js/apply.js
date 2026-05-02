@@ -109,13 +109,16 @@
   const hidePicker = () => { pickerModal.hidden = true;  pickerModal.style.display = 'none'; };
 
   pickerBtn.addEventListener('click', () => {
-    if (!allItems.length) { showToast('利用可能な物品がありません'); return; }
     pickerSearch.value = '';
     curCat = '';
     pickerCats.querySelectorAll('.pill').forEach((p, i) =>
       p.classList.toggle('active', i === 0));
     showPicker();
-    renderList();
+    if (!allItems.length) {
+      pickerList.innerHTML = '<div class="empty">利用可能な物品がありません<br><span style="font-size:12px">(在庫 > 0 の物品を管理者が追加してください)</span></div>';
+    } else {
+      renderList();
+    }
     setTimeout(() => pickerSearch.focus(), 50);
   });
   pickerClose.addEventListener('click', hidePicker);
@@ -145,12 +148,19 @@
 
   // ---- 初期データ取得 ----
   try {
-    const { items = [] } = await Api.getItems();
+    const res = await Api.getItems();
+    if (res.error) {
+      console.error('getItems error:', res.error);
+      showToast('物品取得エラー: ' + res.error);
+    }
+    const items = res.items || [];
+    console.log('[apply] fetched items:', items.length, items);
     allItems = items.filter(i => i.current_quantity > 0);
     allItems.forEach(i => stockMap.set(String(i.id), i.current_quantity));
     buildCats();
   } catch (e) {
-    showToast('物品の取得に失敗しました');
+    console.error('getItems failed:', e);
+    showToast('物品の取得に失敗: ' + (e.message || e));
   }
 
   // ---- 送信 ----
