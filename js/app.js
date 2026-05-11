@@ -187,7 +187,7 @@ routes.home = async () => {
       <div class="search-icon" style="flex:1;display:flex"><input id="q" placeholder="物品名で検索" /></div>
       <select id="cat"><option value="">すべてのカテゴリ</option></select>
     </div>
-    <div id="list"><div class="empty">読み込み中…</div></div>
+    <div id="list"><div class="loading">読み込み中…</div></div>
   `;
 
   const { items = [] } = await Api.getItems();
@@ -243,7 +243,7 @@ routes.home = async () => {
 routes.detail = async ({ id }) => {
   setHeader('物品詳細', true);
   setTabActive('home');
-  view.innerHTML = `<div class="empty">読み込み中…</div>`;
+  view.innerHTML = `<div class="loading">読み込み中…</div>`;
   const { item, error } = await Api.getItemDetail(id);
   if (error || !item) { view.innerHTML = `<div class="empty">読み込みに失敗</div>`; return; }
 
@@ -367,7 +367,7 @@ routes.requests = async () => {
         <option value="item">物品名順</option>
       </select>
     </div>
-    <div id="reqList"><div class="empty">読み込み中…</div></div>
+    <div id="reqList"><div class="loading">読み込み中…</div></div>
   `;
 
   const { requests = [] } = await Api.getRequests();
@@ -453,7 +453,7 @@ routes.requests = async () => {
 routes.reqDetail = async ({ id }) => {
   setHeader('申請詳細', true);
   setTabActive('requests');
-  view.innerHTML = `<div class="empty">読み込み中…</div>`;
+  view.innerHTML = `<div class="loading">読み込み中…</div>`;
   const { request: r, error } = await Api.getRequestDetail(id);
   if (error || !r) { view.innerHTML = `<div class="empty">読み込みに失敗</div>`; return; }
 
@@ -538,6 +538,7 @@ routes.reqDetail = async ({ id }) => {
 routes.add = async () => {
   setHeader('物品追加', false);
   setTabActive('add');
+  view.innerHTML = `<div class="loading">読み込み中…</div>`;
 
   if (!State.items.length) {
     const { items = [] } = await Api.getItems();
@@ -651,7 +652,7 @@ routes.add = async () => {
 routes.editItem = async ({ id }) => {
   setHeader('物品の編集', true);
   setTabActive('home');
-  view.innerHTML = `<div class="empty">読み込み中…</div>`;
+  view.innerHTML = `<div class="loading">読み込み中…</div>`;
 
   if (!State.items.length) {
     const { items = [] } = await Api.getItems();
@@ -782,7 +783,7 @@ routes.log = async () => {
         <option value="return">返却</option>
       </select>
     </div>
-    <div id="logList"><div class="empty">読み込み中…</div></div>
+    <div id="logList"><div class="loading">読み込み中…</div></div>
   `;
   const { logs = [] } = await Api.getLogs();
   const listEl = view.querySelector('#logList');
