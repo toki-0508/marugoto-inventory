@@ -209,6 +209,11 @@ routes.home = async () => {
     <div class="search-bar">
       <div class="search-icon" style="flex:1;display:flex"><input id="q" placeholder="物品名で検索" /></div>
       <select id="cat"><option value="">すべてのカテゴリ</option></select>
+      <select id="itemType">
+        <option value="">すべての種別</option>
+        <option value="equipment">物品</option>
+        <option value="consumable">消耗品</option>
+      </select>
     </div>
     <div id="list"><div class="loading">読み込み中…</div></div>
   `;
@@ -218,6 +223,7 @@ routes.home = async () => {
 
   const cats = [...new Set(items.map(i => i.category).filter(Boolean))];
   const catSel = view.querySelector('#cat');
+  const typeSel = view.querySelector('#itemType');
   cats.forEach(c => {
     const o = document.createElement('option');
     o.value = o.textContent = c;
@@ -228,8 +234,11 @@ routes.home = async () => {
   const render = () => {
     const q = view.querySelector('#q').value.trim();
     const cat = catSel.value;
+    const itemType = typeSel.value;
     const filtered = items.filter(i =>
-      (!q || i.name.includes(q)) && (!cat || i.category === cat)
+      (!q || i.name.includes(q)) &&
+      (!cat || i.category === cat) &&
+      (!itemType || getItemType(i) === itemType)
     );
     if (!filtered.length) { list.innerHTML = '<div class="empty">該当なし</div>'; return; }
     list.innerHTML = filtered.map(i => `
@@ -258,6 +267,7 @@ routes.home = async () => {
   };
   view.querySelector('#q').addEventListener('input', render);
   catSel.addEventListener('change', render);
+  typeSel.addEventListener('change', render);
   render();
 };
 

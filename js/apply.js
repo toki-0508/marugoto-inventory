@@ -133,12 +133,15 @@
 
   let allItems = [];
   let curCat = '';
+  let curItemType = '';
   const stockMap = new Map();
 
   const renderList = () => {
     const q = pickerSearch.value.trim();
     const filtered = allItems.filter(i =>
-      (!curCat || i.category === curCat) && (!q || i.name.includes(q))
+      (!curCat || i.category === curCat) &&
+      (!curItemType || i.item_type === curItemType) &&
+      (!q || i.name.includes(q))
     );
     if (!filtered.length) {
       pickerList.innerHTML = '<div class="empty">該当する物品がありません</div>';
@@ -181,11 +184,24 @@
   const buildCats = () => {
     const cats = [...new Set(allItems.map(i => i.category).filter(Boolean))];
     pickerCats.innerHTML =
+      `<div class="picker-type-row">
+        <button type="button" class="pill active" data-type="">すべて</button>
+        <button type="button" class="pill" data-type="equipment">物品</button>
+        <button type="button" class="pill" data-type="consumable">消耗品</button>
+      </div>` +
       `<button type="button" class="pill active" data-cat="">すべて</button>` +
       cats.map(c => `<button type="button" class="pill" data-cat="${escape(c)}">${escape(c)}</button>`).join('');
-    pickerCats.querySelectorAll('.pill').forEach(p =>
+    pickerCats.querySelectorAll('.pill[data-type]').forEach(p =>
       p.addEventListener('click', () => {
-        pickerCats.querySelectorAll('.pill').forEach(x => x.classList.remove('active'));
+        pickerCats.querySelectorAll('.pill[data-type]').forEach(x => x.classList.remove('active'));
+        p.classList.add('active');
+        curItemType = p.dataset.type;
+        renderList();
+      })
+    );
+    pickerCats.querySelectorAll('.pill[data-cat]').forEach(p =>
+      p.addEventListener('click', () => {
+        pickerCats.querySelectorAll('.pill[data-cat]').forEach(x => x.classList.remove('active'));
         p.classList.add('active');
         curCat = p.dataset.cat;
         renderList();
@@ -208,7 +224,9 @@
   pickerBtn.addEventListener('click', () => {
     pickerSearch.value = '';
     curCat = '';
-    pickerCats.querySelectorAll('.pill').forEach((p, i) => p.classList.toggle('active', i === 0));
+    curItemType = '';
+    pickerCats.querySelectorAll('.pill[data-cat]').forEach((p, i) => p.classList.toggle('active', i === 0));
+    pickerCats.querySelectorAll('.pill[data-type]').forEach((p, i) => p.classList.toggle('active', i === 0));
     showPicker();
     if (!allItems.length) {
       pickerList.innerHTML = '<div class="empty">利用可能な物品がありません<br><span style="font-size:12px">(在庫 > 0 の物品を管理者が追加してください)</span></div>';

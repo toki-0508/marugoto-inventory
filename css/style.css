@@ -640,6 +640,9 @@ main { flex: 1; padding: 12px 14px 90px; }
   scrollbar-width: none;
 }
 .picker-cats::-webkit-scrollbar { display: none; }
+.picker-type-row {
+  display: contents;
+}
 .picker-list {
   flex: 1;
   overflow-y: auto;
