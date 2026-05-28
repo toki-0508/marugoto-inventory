@@ -254,9 +254,25 @@ function setupSheets() {
     if (lastCol === 0) {
       s.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
       s.setFrozenRows(1);
-    } else if (lastCol < headers.length) {
-      const add = headers.slice(lastCol);
-      s.getRange(1, lastCol + 1, 1, add.length).setValues([add]).setFontWeight('bold');
+      return;
+    }
+
+    const current = s.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v || '').trim());
+    const occupied = new Set(current.filter(Boolean));
+    const blanks = [];
+    for (let i = 0; i < current.length; i++) {
+      if (!current[i]) blanks.push(i + 1);
+    }
+
+    headers.forEach(header => {
+      if (occupied.has(header)) return;
+      const targetCol = blanks.length ? blanks.shift() : s.getLastColumn() + 1;
+      s.getRange(1, targetCol).setValue(header).setFontWeight('bold');
+      occupied.add(header);
+    });
+
+    if (s.getFrozenRows && s.getFrozenRows() < 1) {
+      s.setFrozenRows(1);
     }
   };
   ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'note', 'image']);
