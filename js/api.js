@@ -5,6 +5,14 @@ const Mock = (() => {
   const tx = [];
   const requests = [];
 
+  const normalizeItemType = value => {
+    const raw = String(value || '').trim();
+    if (!raw) return 'equipment';
+    if (raw === 'consumable' || raw === '消耗品') return 'consumable';
+    if (raw === 'equipment' || raw === '物品') return 'equipment';
+    return 'equipment';
+  };
+
   const calcLending = id => {
     let lent = 0, ret = 0;
     tx.forEach(t => {
@@ -36,12 +44,12 @@ const Mock = (() => {
   const nextItemId = () => items.length ? items[items.length - 1].id + 1 : 1;
   const nextTxId = () => tx.length ? tx[tx.length - 1].id + 1 : 1;
   const nextRequestId = () => requests.length ? requests[requests.length - 1].id + 1 : 1;
-  const isConsumable = item => item && item.item_type === 'consumable';
+  const isConsumable = item => item && normalizeItemType(item.item_type) === 'consumable';
 
   const normalizePurchaseDraft = request => ({
     name: request.approved_item_name || request.purchase_name || request.item_name || '',
     category: request.approved_category || request.purchase_category || '',
-    item_type: request.approved_item_type || request.purchase_item_type || 'equipment',
+    item_type: normalizeItemType(request.approved_item_type || request.purchase_item_type),
     total_quantity: Number(request.approved_quantity || request.quantity || 0),
     note: request.approved_note || request.purchase_note || '',
     image: request.approved_image || request.purchase_image || '',
@@ -90,14 +98,14 @@ const Mock = (() => {
     },
     addItem: payload => {
       const newId = nextItemId();
-      items.push({ id: newId, ...payload, item_type: payload.item_type || 'equipment', image: payload.image || '' });
+      items.push({ id: newId, ...payload, item_type: normalizeItemType(payload.item_type), image: payload.image || '' });
       return Promise.resolve({ success: true, id: newId });
     },
     updateItem: payload => {
       const it = items.find(x => x.id === Number(payload.id));
       if (!it) return Promise.resolve({ error: 'not found' });
       ['name', 'category', 'item_type', 'total_quantity', 'note', 'image'].forEach(k => {
-        if (payload[k] !== undefined) it[k] = (k === 'total_quantity') ? Number(payload[k]) : payload[k];
+        if (payload[k] !== undefined) it[k] = (k === 'total_quantity') ? Number(payload[k]) : (k === 'item_type' ? normalizeItemType(payload[k]) : payload[k]);
       });
       return Promise.resolve({ success: true });
     },
@@ -134,7 +142,7 @@ const Mock = (() => {
         }
         itemId = Number(payload.item_id);
         itemName = it.name;
-        itemType = it.item_type || 'equipment';
+        itemType = normalizeItemType(it.item_type);
       } else {
         itemName = String(payload.purchase_name || '').trim();
         quantity = Number(payload.purchase_quantity);
@@ -159,7 +167,7 @@ const Mock = (() => {
         purchase_name: type === 'purchase' ? itemName : '',
         purchase_image: type === 'purchase' ? (payload.purchase_image || '') : '',
         purchase_note: type === 'purchase' ? (payload.purchase_note || '') : '',
-        purchase_item_type: type === 'purchase' ? (payload.purchase_item_type || 'equipment') : '',
+        purchase_item_type: type === 'purchase' ? normalizeItemType(payload.purchase_item_type) : '',
         purchase_category: '',
         approved_item_name: '',
         approved_category: '',
@@ -189,7 +197,7 @@ const Mock = (() => {
       if (approved_item && r.request_type === 'purchase') {
         r.approved_item_name = approved_item.name || '';
         r.approved_category = approved_item.category || '';
-        r.approved_item_type = approved_item.item_type || 'equipment';
+        r.approved_item_type = normalizeItemType(approved_item.item_type);
         r.approved_quantity = Number(approved_item.total_quantity) || '';
         r.approved_note = approved_item.note || '';
         r.approved_image = approved_item.image || '';

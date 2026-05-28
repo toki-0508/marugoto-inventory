@@ -36,6 +36,9 @@ gas/Code.gs             Apps Script バックエンド
 **items**
 | A: id | B: name | C: category | D: item_type | E: total_quantity | F: note | G: image |
 
+- `item_type` には `物品` / `消耗品` を入れる
+- 互換のため `equipment` / `consumable` でも動作する
+
 **transactions**
 | A: id | B: item_id | C: type | D: quantity | E: target | F: timestamp | G: memo |
 

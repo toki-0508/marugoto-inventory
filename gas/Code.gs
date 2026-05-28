@@ -32,6 +32,14 @@ const REQ_SHEET = 'requests';
 const ACTIVE_RESERVATION_STATUSES = { pending: true, ready: true };
 const ITEM_TYPE_LABELS = { equipment: '物品', consumable: '消耗品' };
 
+function _normalizeItemType(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return 'equipment';
+  if (raw === 'consumable' || raw === '消耗品') return 'consumable';
+  if (raw === 'equipment' || raw === '物品') return 'equipment';
+  return 'equipment';
+}
+
 function doGet(e) {
   return _respond(() => {
     const action = (e && e.parameter && e.parameter.action) || '';
@@ -132,14 +140,14 @@ function _ensureItemTypeColumn(sheet) {
   sheet.getRange(1, col).setValue('item_type').setFontWeight('bold');
   const lastRow = sheet.getLastRow();
   if (lastRow >= 2) {
-    const defaults = Array.from({ length: lastRow - 1 }, () => ['equipment']);
+    const defaults = Array.from({ length: lastRow - 1 }, () => ['物品']);
     sheet.getRange(2, col, defaults.length, 1).setValues(defaults);
   }
   return col;
 }
 
 function _itemFromRow(row, cols) {
-  const itemType = (_cell(row, cols.item_type, '') || 'equipment').toString();
+  const itemType = _normalizeItemType(_cell(row, cols.item_type, ''));
   const totalQuantity = Number(_cell(row, cols.total_quantity, 0)) || 0;
   return {
     id: _cell(row, cols.id, ''),
@@ -181,10 +189,10 @@ function _normalizeRequestRow(row) {
     purchase_name: row[13] || '',
     purchase_image: row[14] || '',
     purchase_note: row[15] || '',
-    purchase_item_type: row[16] || 'equipment',
+    purchase_item_type: _normalizeItemType(row[16]),
     approved_item_name: row[17] || '',
     approved_category: row[18] || '',
-    approved_item_type: row[19] || '',
+    approved_item_type: _normalizeItemType(row[19]),
     approved_quantity: Number(row[20]) || 0,
     approved_note: row[21] || '',
     approved_image: row[22] || ''
@@ -225,7 +233,7 @@ function _buildApprovedPurchaseDraft(req, approvedItem) {
   return {
     name: (approvedItem && approvedItem.name) || req.approved_item_name || req.purchase_name || req.item_name || '',
     category: (approvedItem && approvedItem.category) || req.approved_category || '',
-    item_type: (approvedItem && approvedItem.item_type) || req.approved_item_type || req.purchase_item_type || 'equipment',
+    item_type: _normalizeItemType((approvedItem && approvedItem.item_type) || req.approved_item_type || req.purchase_item_type),
     total_quantity: quantity,
     note: (approvedItem && approvedItem.note) || req.approved_note || req.purchase_note || '',
     image: (approvedItem && approvedItem.image) || req.approved_image || req.purchase_image || ''
@@ -361,7 +369,7 @@ function addItem(p) {
   row[cols.total_quantity - 1] = Number(p.total_quantity) || 0;
   row[cols.note - 1] = p.note || '';
   row[cols.image - 1] = p.image || '';
-  row[itemTypeCol - 1] = p.item_type || 'equipment';
+  row[itemTypeCol - 1] = ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment;
   sheet.appendRow(row);
   return { success: true, id: newId };
 }
@@ -377,7 +385,7 @@ function updateItem(p) {
       const row = i + 1;
       if (p.name           !== undefined) sheet.getRange(row, cols.name).setValue(p.name);
       if (p.category       !== undefined) sheet.getRange(row, cols.category).setValue(p.category);
-      if (p.item_type      !== undefined) sheet.getRange(row, itemTypeCol).setValue(p.item_type || 'equipment');
+      if (p.item_type      !== undefined) sheet.getRange(row, itemTypeCol).setValue(ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment);
       if (p.total_quantity !== undefined) sheet.getRange(row, cols.total_quantity).setValue(Number(p.total_quantity) || 0);
       if (p.note           !== undefined) sheet.getRange(row, cols.note).setValue(p.note);
       if (p.image          !== undefined) sheet.getRange(row, cols.image).setValue(p.image);
@@ -470,7 +478,7 @@ function addRequest(p) {
     quantity = Number(p.purchase_quantity) || 0;
     purchase_image = p.purchase_image || '';
     purchase_note = p.purchase_note || '';
-    purchase_item_type = p.purchase_item_type || 'equipment';
+    purchase_item_type = _normalizeItemType(p.purchase_item_type);
     if (!purchase_name || !quantity) return { error: 'invalid payload' };
     item_name = purchase_name;
   }
@@ -481,7 +489,7 @@ function addRequest(p) {
     newId, item_id ? Number(item_id) : '', item_name, quantity,
     p.organization, p.user_name, purpose,
     'pending', new Date(), '', '', p.email || '',
-    requestType, purchase_name, purchase_image, purchase_note, purchase_item_type,
+    requestType, purchase_name, purchase_image, purchase_note, ITEM_TYPE_LABELS[purchase_item_type] || ITEM_TYPE_LABELS.equipment,
     '', '', '', '', '', ''
   ]);
   return { success: true, id: newId };
@@ -561,11 +569,11 @@ function updateRequestStatus(p) {
     newRow[itemCols.total_quantity - 1] = draft.total_quantity;
     newRow[itemCols.note - 1] = draft.note;
     newRow[itemCols.image - 1] = draft.image;
-    newRow[itemTypeCol - 1] = draft.item_type;
+    newRow[itemTypeCol - 1] = ITEM_TYPE_LABELS[_normalizeItemType(draft.item_type)] || ITEM_TYPE_LABELS.equipment;
     itemSheet.appendRow(newRow);
     sheet.getRange(rowIdx, 18).setValue(draft.name);            // R: approved_item_name
     sheet.getRange(rowIdx, 19).setValue(draft.category);        // S: approved_category
-    sheet.getRange(rowIdx, 20).setValue(draft.item_type);       // T: approved_item_type
+    sheet.getRange(rowIdx, 20).setValue(ITEM_TYPE_LABELS[_normalizeItemType(draft.item_type)] || ITEM_TYPE_LABELS.equipment); // T: approved_item_type
     sheet.getRange(rowIdx, 21).setValue(draft.total_quantity);  // U: approved_quantity
     sheet.getRange(rowIdx, 22).setValue(draft.note);            // V: approved_note
     sheet.getRange(rowIdx, 23).setValue(draft.image);           // W: approved_image
