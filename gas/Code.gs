@@ -94,6 +94,65 @@ function _toIso(value) {
   return value instanceof Date ? value.toISOString() : String(value || '');
 }
 
+function _headerMap(sheet) {
+  const lastCol = sheet.getLastColumn();
+  const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  const map = {};
+  for (let i = 0; i < headers.length; i++) {
+    const key = String(headers[i] || '').trim();
+    if (key) map[key] = i + 1;
+  }
+  return map;
+}
+
+function _cell(row, colIndex, fallback) {
+  if (!colIndex) return fallback;
+  const value = row[colIndex - 1];
+  return value === undefined ? fallback : value;
+}
+
+function _itemColumns(sheet) {
+  const headers = _headerMap(sheet);
+  return {
+    id: headers.id || 1,
+    name: headers.name || 2,
+    category: headers.category || 3,
+    total_quantity: headers.total_quantity || 4,
+    note: headers.note || 5,
+    image: headers.image || 6,
+    item_type: headers.item_type || 0
+  };
+}
+
+function _ensureItemTypeColumn(sheet) {
+  const headers = _headerMap(sheet);
+  if (headers.item_type) return headers.item_type;
+
+  const col = sheet.getLastColumn() + 1;
+  sheet.getRange(1, col).setValue('item_type').setFontWeight('bold');
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    const defaults = Array.from({ length: lastRow - 1 }, () => ['equipment']);
+    sheet.getRange(2, col, defaults.length, 1).setValues(defaults);
+  }
+  return col;
+}
+
+function _itemFromRow(row, cols) {
+  const itemType = (_cell(row, cols.item_type, '') || 'equipment').toString();
+  const totalQuantity = Number(_cell(row, cols.total_quantity, 0)) || 0;
+  return {
+    id: _cell(row, cols.id, ''),
+    name: _cell(row, cols.name, ''),
+    category: _cell(row, cols.category, ''),
+    item_type: itemType,
+    item_type_label: ITEM_TYPE_LABELS[itemType] || ITEM_TYPE_LABELS.equipment,
+    total_quantity: totalQuantity,
+    note: _cell(row, cols.note, '') || '',
+    image: _cell(row, cols.image, '') || ''
+  };
+}
+
 function _requestHeaders() {
   return [
     'id', 'item_id', 'item_name', 'quantity', 'organization', 'user_name',
@@ -199,7 +258,9 @@ function setupSheets() {
 }
 
 function getItems() {
-  const items = _sheet(ITEMS_SHEET).getDataRange().getValues();
+  const itemSheet = _sheet(ITEMS_SHEET);
+  const itemCols = _itemColumns(itemSheet);
+  const items = itemSheet.getDataRange().getValues();
   const tx    = _sheet(TX_SHEET).getDataRange().getValues();
   const reservations = _getReservationMap();
 
@@ -214,38 +275,29 @@ function getItems() {
 
   const result = [];
   for (let i = 1; i < items.length; i++) {
-    const [id, name, category, itemType, total, note, image] = items[i];
-    if (!id) continue;
-    const s = stock[id] || { lent: 0, ret: 0 };
-    const reserved = reservations[id] ? reservations[id].reserved : 0;
+    const item = _itemFromRow(items[i], itemCols);
+    if (!item.id) continue;
+    const s = stock[item.id] || { lent: 0, ret: 0 };
+    const reserved = reservations[item.id] ? reservations[item.id].reserved : 0;
     result.push({
-      id, name, category,
-      item_type: itemType || 'equipment',
-      item_type_label: ITEM_TYPE_LABELS[itemType] || ITEM_TYPE_LABELS.equipment,
-      total_quantity: Number(total) || 0,
-      current_quantity: (Number(total) || 0) - reserved - s.lent + s.ret,
+      ...item,
+      current_quantity: item.total_quantity - reserved - s.lent + s.ret,
       reserved_quantity: reserved,
       lent_quantity: s.lent - s.ret,
-      note: note || '',
-      image: image || ''
     });
   }
   return { items: result };
 }
 
 function getItemDetail(itemId) {
-  const items = _sheet(ITEMS_SHEET).getDataRange().getValues();
+  const itemSheet = _sheet(ITEMS_SHEET);
+  const itemCols = _itemColumns(itemSheet);
+  const items = itemSheet.getDataRange().getValues();
   let item = null;
   for (let i = 1; i < items.length; i++) {
-    if (items[i][0] == itemId) {
-      item = {
-        id: items[i][0], name: items[i][1], category: items[i][2],
-        item_type: items[i][3] || 'equipment',
-        item_type_label: ITEM_TYPE_LABELS[items[i][3]] || ITEM_TYPE_LABELS.equipment,
-        total_quantity: Number(items[i][4]) || 0,
-        note: items[i][5] || '',
-        image: items[i][6] || ''
-      };
+    const candidate = _itemFromRow(items[i], itemCols);
+    if (candidate.id == itemId) {
+      item = candidate;
       break;
     }
   }
@@ -299,27 +351,36 @@ function addTransaction(p) {
 function addItem(p) {
   if (!p || !p.name) return { error: 'invalid payload' };
   const sheet = _sheet(ITEMS_SHEET);
+  const cols = _itemColumns(sheet);
+  const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
   const newId = _nextId(sheet);
-  sheet.appendRow([
-    newId, p.name, p.category || '', p.item_type || 'equipment', Number(p.total_quantity) || 0,
-    p.note || '', p.image || ''
-  ]);
+  const row = [];
+  row[cols.id - 1] = newId;
+  row[cols.name - 1] = p.name;
+  row[cols.category - 1] = p.category || '';
+  row[cols.total_quantity - 1] = Number(p.total_quantity) || 0;
+  row[cols.note - 1] = p.note || '';
+  row[cols.image - 1] = p.image || '';
+  row[itemTypeCol - 1] = p.item_type || 'equipment';
+  sheet.appendRow(row);
   return { success: true, id: newId };
 }
 
 function updateItem(p) {
   if (!p || !p.id) return { error: 'invalid payload' };
   const sheet = _sheet(ITEMS_SHEET);
+  const cols = _itemColumns(sheet);
+  const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
   const values = sheet.getDataRange().getValues();
   for (let i = 1; i < values.length; i++) {
-    if (values[i][0] == p.id) {
+    if (_cell(values[i], cols.id, '') == p.id) {
       const row = i + 1;
-      if (p.name           !== undefined) sheet.getRange(row, 2).setValue(p.name);
-      if (p.category       !== undefined) sheet.getRange(row, 3).setValue(p.category);
-      if (p.item_type      !== undefined) sheet.getRange(row, 4).setValue(p.item_type || 'equipment');
-      if (p.total_quantity !== undefined) sheet.getRange(row, 5).setValue(Number(p.total_quantity) || 0);
-      if (p.note           !== undefined) sheet.getRange(row, 6).setValue(p.note);
-      if (p.image          !== undefined) sheet.getRange(row, 7).setValue(p.image);
+      if (p.name           !== undefined) sheet.getRange(row, cols.name).setValue(p.name);
+      if (p.category       !== undefined) sheet.getRange(row, cols.category).setValue(p.category);
+      if (p.item_type      !== undefined) sheet.getRange(row, itemTypeCol).setValue(p.item_type || 'equipment');
+      if (p.total_quantity !== undefined) sheet.getRange(row, cols.total_quantity).setValue(Number(p.total_quantity) || 0);
+      if (p.note           !== undefined) sheet.getRange(row, cols.note).setValue(p.note);
+      if (p.image          !== undefined) sheet.getRange(row, cols.image).setValue(p.image);
       return { success: true };
     }
   }
@@ -329,9 +390,10 @@ function updateItem(p) {
 function deleteItem(p) {
   if (!p || !p.id) return { error: 'invalid payload' };
   const sheet = _sheet(ITEMS_SHEET);
+  const cols = _itemColumns(sheet);
   const values = sheet.getDataRange().getValues();
   for (let i = 1; i < values.length; i++) {
-    if (values[i][0] == p.id) {
+    if (_cell(values[i], cols.id, '') == p.id) {
       sheet.deleteRow(i + 1);
       return { success: true };
     }
@@ -340,10 +402,13 @@ function deleteItem(p) {
 }
 
 function getRequests() {
-  const items = _sheet(ITEMS_SHEET).getDataRange().getValues();
+  const itemSheet = _sheet(ITEMS_SHEET);
+  const itemCols = _itemColumns(itemSheet);
+  const items = itemSheet.getDataRange().getValues();
   const itemTypes = {};
   for (let i = 1; i < items.length; i++) {
-    itemTypes[items[i][0]] = items[i][3] || 'equipment';
+    const item = _itemFromRow(items[i], itemCols);
+    itemTypes[item.id] = item.item_type || 'equipment';
   }
   return {
     requests: _getRequestsData().map(request => ({
@@ -358,7 +423,9 @@ function addRequest(p) {
     return { error: 'invalid payload' };
   }
   const requestType = p.request_type === 'purchase' ? 'purchase' : 'loan';
-  const items = _sheet(ITEMS_SHEET).getDataRange().getValues();
+  const itemSheet = _sheet(ITEMS_SHEET);
+  const itemCols = _itemColumns(itemSheet);
+  const items = itemSheet.getDataRange().getValues();
   let item_id = '';
   let item_name = '';
   let quantity = 0;
@@ -372,12 +439,9 @@ function addRequest(p) {
     if (!p.item_id || !p.quantity || !p.purpose) return { error: 'invalid payload' };
     let item = null;
     for (let i = 1; i < items.length; i++) {
-      if (items[i][0] == p.item_id) {
-        item = {
-          id: items[i][0],
-          name: items[i][1],
-          total_quantity: Number(items[i][4]) || 0
-        };
+      const candidate = _itemFromRow(items[i], itemCols);
+      if (candidate.id == p.item_id) {
+        item = candidate;
         break;
       }
     }
@@ -434,10 +498,13 @@ function getRequestDetail(id) {
   }
   if (!r) return { error: 'request not found' };
   if (r.request_type === 'loan') {
-    const items = _sheet(ITEMS_SHEET).getDataRange().getValues();
+    const itemSheet = _sheet(ITEMS_SHEET);
+    const itemCols = _itemColumns(itemSheet);
+    const items = itemSheet.getDataRange().getValues();
     for (let i = 1; i < items.length; i++) {
-      if (items[i][0] == r.item_id) {
-        r.item_type = items[i][3] || 'equipment';
+      const item = _itemFromRow(items[i], itemCols);
+      if (item.id == r.item_id) {
+        r.item_type = item.item_type || 'equipment';
         break;
       }
     }
@@ -484,10 +551,18 @@ function updateRequestStatus(p) {
       return { error: 'approved item is invalid' };
     }
     const itemSheet = _sheet(ITEMS_SHEET);
+    const itemCols = _itemColumns(itemSheet);
+    const itemTypeCol = itemCols.item_type || _ensureItemTypeColumn(itemSheet);
     const newItemId = _nextId(itemSheet);
-    itemSheet.appendRow([
-      newItemId, draft.name, draft.category, draft.item_type, draft.total_quantity, draft.note, draft.image
-    ]);
+    const newRow = [];
+    newRow[itemCols.id - 1] = newItemId;
+    newRow[itemCols.name - 1] = draft.name;
+    newRow[itemCols.category - 1] = draft.category;
+    newRow[itemCols.total_quantity - 1] = draft.total_quantity;
+    newRow[itemCols.note - 1] = draft.note;
+    newRow[itemCols.image - 1] = draft.image;
+    newRow[itemTypeCol - 1] = draft.item_type;
+    itemSheet.appendRow(newRow);
     sheet.getRange(rowIdx, 18).setValue(draft.name);            // R: approved_item_name
     sheet.getRange(rowIdx, 19).setValue(draft.category);        // S: approved_category
     sheet.getRange(rowIdx, 20).setValue(draft.item_type);       // T: approved_item_type
@@ -504,15 +579,17 @@ function updateRequestStatus(p) {
   if (request.request_type === 'loan' && (p.status === 'received' || p.status === 'returned')) {
     const txSheet = _sheet(TX_SHEET);
     const itemSheet = _sheet(ITEMS_SHEET);
+    const itemCols = _itemColumns(itemSheet);
     const itemValues = itemSheet.getDataRange().getValues();
     let itemRowIdx = -1;
     let itemType = 'equipment';
     let itemTotal = 0;
     for (let i = 1; i < itemValues.length; i++) {
-      if (itemValues[i][0] == request.item_id) {
+      const item = _itemFromRow(itemValues[i], itemCols);
+      if (item.id == request.item_id) {
         itemRowIdx = i + 1;
-        itemType = itemValues[i][3] || 'equipment';
-        itemTotal = Number(itemValues[i][4]) || 0;
+        itemType = item.item_type || 'equipment';
+        itemTotal = item.total_quantity;
         break;
       }
     }
@@ -521,7 +598,7 @@ function updateRequestStatus(p) {
     const newId = _nextId(txSheet);
     if (p.status === 'received' && itemType === 'consumable') {
       if (itemRowIdx === -1) return { error: 'item not found' };
-      itemSheet.getRange(itemRowIdx, 5).setValue(Math.max(0, itemTotal - Number(request.quantity)));
+      itemSheet.getRange(itemRowIdx, itemCols.total_quantity).setValue(Math.max(0, itemTotal - Number(request.quantity)));
       txSheet.appendRow([
         newId, Number(request.item_id), 'consume',
         Number(request.quantity), target, new Date(),
