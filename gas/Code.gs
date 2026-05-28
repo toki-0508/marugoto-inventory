@@ -4,15 +4,16 @@
  * 【セットアップ手順】
  * 1) スプレッドシートを新規作成し、シートを 3 つ用意する
  *    シート名: items
- *      A1: id  B1: name  C1: category  D1: item_type  E1: total_quantity  F1: note  G1: image
+ *      A1: id  B1: name  C1: category  D1: item_type  E1: total_quantity  F1: storage_location  G1: note  H1: image
  *    シート名: transactions
  *      A1: id  B1: item_id  C1: type  D1: quantity  E1: target  F1: timestamp  G1: memo
  *    シート名: requests
  *      A1: id  B1: item_id  C1: item_name  D1: quantity  E1: organization
  *      F1: user_name  G1: purpose  H1: status  I1: created_at  J1: processed_at
  *      K1: memo  L1: email  M1: request_type  N1: purchase_name  O1: purchase_image
- *      P1: purchase_note  Q1: purchase_item_type  R1: approved_item_name  S1: approved_category
- *      T1: approved_item_type  U1: approved_quantity  V1: approved_note  W1: approved_image
+ *      P1: purchase_note  Q1: purchase_item_type  R1: purchase_storage_location  S1: approved_item_name
+ *      T1: approved_category  U1: approved_item_type  V1: approved_quantity  W1: approved_storage_location
+ *      X1: approved_note  Y1: approved_image
  *
  * 2) Apps Script エディタを開いて、このファイルの中身を貼り付ける
  *
@@ -126,10 +127,46 @@ function _itemColumns(sheet) {
     name: headers.name || 2,
     category: headers.category || 3,
     total_quantity: headers.total_quantity || 4,
+    storage_location: headers.storage_location || 0,
     note: headers.note || 5,
     image: headers.image || 6,
     item_type: headers.item_type || 0
   };
+}
+
+function _ensureStorageLocationColumn(sheet) {
+  const headers = _headerMap(sheet);
+  const totalCol = headers.total_quantity || 4;
+  const desiredCol = totalCol + 1;
+  const lastRow = sheet.getLastRow();
+  const existingCol = headers.storage_location || 0;
+
+  if (existingCol === desiredCol) return existingCol;
+
+  if (existingCol) {
+    const values = lastRow > 0 ? sheet.getRange(1, existingCol, lastRow, 1).getValues() : [['storage_location']];
+    sheet.insertColumnAfter(totalCol);
+    sheet.getRange(1, desiredCol, values.length, 1).setValues(values).setFontWeight('bold');
+    const deleteCol = existingCol >= desiredCol ? existingCol + 1 : existingCol;
+    sheet.deleteColumn(deleteCol);
+    return desiredCol;
+  }
+
+  const currentLastCol = sheet.getLastColumn();
+  const headerAtDesired = desiredCol <= currentLastCol
+    ? String(sheet.getRange(1, desiredCol).getValues()[0][0] || '').trim()
+    : '';
+
+  if (headerAtDesired) {
+    sheet.insertColumnAfter(totalCol);
+  }
+
+  sheet.getRange(1, desiredCol).setValue('storage_location').setFontWeight('bold');
+  if (lastRow >= 2) {
+    const defaults = Array.from({ length: lastRow - 1 }, () => ['']);
+    sheet.getRange(2, desiredCol, defaults.length, 1).setValues(defaults);
+  }
+  return desiredCol;
 }
 
 function _ensureItemTypeColumn(sheet) {
@@ -177,6 +214,7 @@ function _itemFromRow(row, cols) {
     item_type: itemType,
     item_type_label: ITEM_TYPE_LABELS[itemType] || ITEM_TYPE_LABELS.equipment,
     total_quantity: totalQuantity,
+    storage_location: _cell(row, cols.storage_location, '') || '',
     note: _cell(row, cols.note, '') || '',
     image: _cell(row, cols.image, '') || ''
   };
@@ -186,8 +224,8 @@ function _requestHeaders() {
   return [
     'id', 'item_id', 'item_name', 'quantity', 'organization', 'user_name',
     'purpose', 'status', 'created_at', 'processed_at', 'memo', 'email',
-    'request_type', 'purchase_name', 'purchase_image', 'purchase_note', 'purchase_item_type',
-    'approved_item_name', 'approved_category', 'approved_item_type', 'approved_quantity',
+    'request_type', 'purchase_name', 'purchase_image', 'purchase_note', 'purchase_item_type', 'purchase_storage_location',
+    'approved_item_name', 'approved_category', 'approved_item_type', 'approved_quantity', 'approved_storage_location',
     'approved_note', 'approved_image'
   ];
 }
@@ -211,12 +249,14 @@ function _normalizeRequestRow(row) {
     purchase_image: row[14] || '',
     purchase_note: row[15] || '',
     purchase_item_type: _normalizeItemType(row[16]),
-    approved_item_name: row[17] || '',
-    approved_category: row[18] || '',
-    approved_item_type: _normalizeItemType(row[19]),
-    approved_quantity: Number(row[20]) || 0,
-    approved_note: row[21] || '',
-    approved_image: row[22] || ''
+    purchase_storage_location: row[17] || '',
+    approved_item_name: row[18] || '',
+    approved_category: row[19] || '',
+    approved_item_type: _normalizeItemType(row[20]),
+    approved_quantity: Number(row[21]) || 0,
+    approved_storage_location: row[22] || '',
+    approved_note: row[23] || '',
+    approved_image: row[24] || ''
   };
 }
 
@@ -256,6 +296,7 @@ function _buildApprovedPurchaseDraft(req, approvedItem) {
     category: (approvedItem && approvedItem.category) || req.approved_category || '',
     item_type: _normalizeItemType((approvedItem && approvedItem.item_type) || req.approved_item_type || req.purchase_item_type),
     total_quantity: quantity,
+    storage_location: (approvedItem && approvedItem.storage_location) || req.approved_storage_location || req.purchase_storage_location || '',
     note: (approvedItem && approvedItem.note) || req.approved_note || req.purchase_note || '',
     image: (approvedItem && approvedItem.image) || req.approved_image || req.purchase_image || ''
   };
@@ -296,8 +337,9 @@ function setupSheets() {
       s.setFrozenRows(1);
     }
   };
-  ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'note', 'image']);
+  ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'storage_location', 'note', 'image']);
   _ensureItemTypeColumn(_sheet(ITEMS_SHEET));
+  _ensureStorageLocationColumn(_sheet(ITEMS_SHEET));
   ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo']);
   ensure(REQ_SHEET, _requestHeaders());
   return 'Done';
@@ -399,12 +441,14 @@ function addItem(p) {
   const sheet = _sheet(ITEMS_SHEET);
   const cols = _itemColumns(sheet);
   const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
+  const storageCol = cols.storage_location || _ensureStorageLocationColumn(sheet);
   const newId = _nextId(sheet);
   const row = [];
   row[cols.id - 1] = newId;
   row[cols.name - 1] = p.name;
   row[cols.category - 1] = p.category || '';
   row[cols.total_quantity - 1] = Number(p.total_quantity) || 0;
+  row[storageCol - 1] = p.storage_location || '';
   row[cols.note - 1] = p.note || '';
   row[cols.image - 1] = p.image || '';
   row[itemTypeCol - 1] = ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment;
@@ -417,6 +461,7 @@ function updateItem(p) {
   const sheet = _sheet(ITEMS_SHEET);
   const cols = _itemColumns(sheet);
   const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
+  const storageCol = cols.storage_location || _ensureStorageLocationColumn(sheet);
   const values = sheet.getDataRange().getValues();
   for (let i = 1; i < values.length; i++) {
     if (_cell(values[i], cols.id, '') == p.id) {
@@ -425,6 +470,7 @@ function updateItem(p) {
       if (p.category       !== undefined) sheet.getRange(row, cols.category).setValue(p.category);
       if (p.item_type      !== undefined) sheet.getRange(row, itemTypeCol).setValue(ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment);
       if (p.total_quantity !== undefined) sheet.getRange(row, cols.total_quantity).setValue(Number(p.total_quantity) || 0);
+      if (p.storage_location !== undefined) sheet.getRange(row, storageCol).setValue(p.storage_location);
       if (p.note           !== undefined) sheet.getRange(row, cols.note).setValue(p.note);
       if (p.image          !== undefined) sheet.getRange(row, cols.image).setValue(p.image);
       return { success: true };
@@ -480,6 +526,7 @@ function addRequest(p) {
   let purchase_image = '';
   let purchase_note = '';
   let purchase_item_type = 'equipment';
+  let purchase_storage_location = '';
 
   if (requestType === 'loan') {
     if (!p.item_id || !p.quantity || !p.purpose) return { error: 'invalid payload' };
@@ -517,6 +564,7 @@ function addRequest(p) {
     purchase_image = p.purchase_image || '';
     purchase_note = p.purchase_note || '';
     purchase_item_type = _normalizeItemType(p.purchase_item_type);
+    purchase_storage_location = p.purchase_storage_location || '';
     if (!purchase_name || !quantity) return { error: 'invalid payload' };
     item_name = purchase_name;
   }
@@ -527,8 +575,8 @@ function addRequest(p) {
     newId, item_id ? Number(item_id) : '', item_name, quantity,
     p.organization, p.user_name, purpose,
     'pending', new Date(), '', '', p.email || '',
-    requestType, purchase_name, purchase_image, purchase_note, ITEM_TYPE_LABELS[purchase_item_type] || ITEM_TYPE_LABELS.equipment,
-    '', '', '', '', '', ''
+    requestType, purchase_name, purchase_image, purchase_note, ITEM_TYPE_LABELS[purchase_item_type] || ITEM_TYPE_LABELS.equipment, purchase_storage_location,
+    '', '', '', '', '', '', ''
   ]);
   return { success: true, id: newId };
 }
@@ -605,16 +653,18 @@ function updateRequestStatus(p) {
     newRow[itemCols.name - 1] = draft.name;
     newRow[itemCols.category - 1] = draft.category;
     newRow[itemCols.total_quantity - 1] = draft.total_quantity;
+    if (itemCols.storage_location) newRow[itemCols.storage_location - 1] = draft.storage_location || '';
     newRow[itemCols.note - 1] = draft.note;
     newRow[itemCols.image - 1] = draft.image;
     newRow[itemTypeCol - 1] = ITEM_TYPE_LABELS[_normalizeItemType(draft.item_type)] || ITEM_TYPE_LABELS.equipment;
     itemSheet.appendRow(newRow);
-    sheet.getRange(rowIdx, 18).setValue(draft.name);            // R: approved_item_name
-    sheet.getRange(rowIdx, 19).setValue(draft.category);        // S: approved_category
-    sheet.getRange(rowIdx, 20).setValue(ITEM_TYPE_LABELS[_normalizeItemType(draft.item_type)] || ITEM_TYPE_LABELS.equipment); // T: approved_item_type
-    sheet.getRange(rowIdx, 21).setValue(draft.total_quantity);  // U: approved_quantity
-    sheet.getRange(rowIdx, 22).setValue(draft.note);            // V: approved_note
-    sheet.getRange(rowIdx, 23).setValue(draft.image);           // W: approved_image
+    sheet.getRange(rowIdx, 19).setValue(draft.name);            // S: approved_item_name
+    sheet.getRange(rowIdx, 20).setValue(draft.category);        // T: approved_category
+    sheet.getRange(rowIdx, 21).setValue(ITEM_TYPE_LABELS[_normalizeItemType(draft.item_type)] || ITEM_TYPE_LABELS.equipment); // U: approved_item_type
+    sheet.getRange(rowIdx, 22).setValue(draft.total_quantity);  // V: approved_quantity
+    sheet.getRange(rowIdx, 23).setValue(draft.storage_location || ''); // W: approved_storage_location
+    sheet.getRange(rowIdx, 24).setValue(draft.note);            // X: approved_note
+    sheet.getRange(rowIdx, 25).setValue(draft.image);           // Y: approved_image
   }
 
   sheet.getRange(rowIdx, 8).setValue(p.status);                    // H: status

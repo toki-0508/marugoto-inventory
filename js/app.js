@@ -250,6 +250,7 @@ routes.home = async () => {
           <div class="item-info">
             <div class="item-name">${escape(i.name)}</div>
             <div class="item-cat">${escape(i.category || '')} / ${escape(getItemTypeLabel(i))}</div>
+            <div class="item-note">${i.storage_location ? '保管場所：' + escape(i.storage_location) : ''}</div>
             <div class="item-note">${i.note ? '備考：' + escape(i.note) : ''}</div>
           </div>
         </div>
@@ -314,6 +315,7 @@ routes.detail = async ({ id }) => {
       <div class="meta">
         カテゴリ：${escape(item.category || '-')}<br>
         種別：${escape(getItemTypeLabel(item))}<br>
+        保管場所：${escape(item.storage_location || '-')}<br>
         備考：${escape(item.note || '-')}
       </div>
     </div>
@@ -572,10 +574,12 @@ routes.reqDetail = async ({ id }) => {
           ? `
             <tr><td>申請物品名</td><td>${escape(r.purchase_name || r.item_name || '-')}</td></tr>
             <tr><td>申請総数</td><td>${requestDisplayQuantity(r)}</td></tr>
+            <tr><td>保管場所</td><td>${escape(r.purchase_storage_location || '-')}</td></tr>
             <tr><td>備考</td><td>${escape(r.purchase_note || '-')}</td></tr>
             <tr><td>申請画像</td><td>${r.purchase_image ? `<img class="inline-preview" src="${r.purchase_image}" alt="">` : '-'}</td></tr>
             <tr><td>承認後カテゴリ</td><td>${escape(r.approved_category || '-')}</td></tr>
             <tr><td>承認後種別</td><td>${escape(r.approved_item_type ? getRequestItemTypeLabel({ ...r, approved_item_type: r.approved_item_type, request_type: 'purchase' }) : '-')}</td></tr>
+            <tr><td>承認後保管場所</td><td>${escape(r.approved_storage_location || '-')}</td></tr>
           `
           : `<tr><td>用途</td><td>${escape(r.purpose)}</td></tr>`}
         <tr><td>管理者コメント</td><td>${escape(r.memo || '-')}</td></tr>
@@ -639,6 +643,7 @@ routes.approvePurchase = async ({ id }) => {
     category: requestData.approved_category || '',
     item_type: requestData.approved_item_type || requestData.purchase_item_type || 'equipment',
     total_quantity: requestData.approved_quantity || requestData.quantity || 0,
+    storage_location: requestData.approved_storage_location || requestData.purchase_storage_location || '',
     note: requestData.approved_note || requestData.purchase_note || '',
     image: requestData.approved_image || requestData.purchase_image || '',
   };
@@ -681,6 +686,9 @@ routes.approvePurchase = async ({ id }) => {
 
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="1" required value="${approvedDraft.total_quantity}" />
+
+      <label>保管場所</label>
+      <input name="storage_location" value="${escape(approvedDraft.storage_location || '')}" placeholder="例) 倉庫A" />
 
       <label>備考</label>
       <textarea name="note" rows="3">${escape(approvedDraft.note || '')}</textarea>
@@ -747,6 +755,7 @@ routes.approvePurchase = async ({ id }) => {
       category,
       item_type: form.item_type.value,
       total_quantity: Number(form.total_quantity.value),
+      storage_location: form.storage_location.value.trim(),
       note: form.note.value.trim(),
       image: imageDataUrl,
     };
@@ -822,6 +831,9 @@ routes.add = async () => {
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="0" required inputmode="numeric" placeholder="例) 100" />
 
+      <label>保管場所</label>
+      <input name="storage_location" placeholder="例) 倉庫A" />
+
       <label>備考</label>
       <textarea name="note" rows="2" placeholder="例) 倉庫Aに保管"></textarea>
 
@@ -881,6 +893,7 @@ routes.add = async () => {
       category: cat,
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
+      storage_location: f.storage_location.value.trim(),
       note: f.note.value.trim(),
       image: imageDataUrl,
     };
@@ -949,6 +962,9 @@ routes.editItem = async ({ id }) => {
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="0" required value="${item.total_quantity}" />
 
+      <label>保管場所</label>
+      <input name="storage_location" value="${escape(item.storage_location || '')}" />
+
       <label>備考</label>
       <textarea name="note" rows="2">${escape(item.note || '')}</textarea>
 
@@ -1010,6 +1026,7 @@ routes.editItem = async ({ id }) => {
       category: cat,
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
+      storage_location: f.storage_location.value.trim(),
       note: f.note.value.trim(),
       image: imageDataUrl,
     };

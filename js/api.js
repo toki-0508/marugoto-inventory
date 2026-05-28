@@ -51,6 +51,7 @@ const Mock = (() => {
     category: request.approved_category || request.purchase_category || '',
     item_type: normalizeItemType(request.approved_item_type || request.purchase_item_type),
     total_quantity: Number(request.approved_quantity || request.quantity || 0),
+    storage_location: request.approved_storage_location || request.purchase_storage_location || '',
     note: request.approved_note || request.purchase_note || '',
     image: request.approved_image || request.purchase_image || '',
   });
@@ -98,13 +99,13 @@ const Mock = (() => {
     },
     addItem: payload => {
       const newId = nextItemId();
-      items.push({ id: newId, ...payload, item_type: normalizeItemType(payload.item_type), image: payload.image || '' });
+      items.push({ id: newId, ...payload, storage_location: payload.storage_location || '', item_type: normalizeItemType(payload.item_type), image: payload.image || '' });
       return Promise.resolve({ success: true, id: newId });
     },
     updateItem: payload => {
       const it = items.find(x => x.id === Number(payload.id));
       if (!it) return Promise.resolve({ error: 'not found' });
-      ['name', 'category', 'item_type', 'total_quantity', 'note', 'image'].forEach(k => {
+      ['name', 'category', 'item_type', 'total_quantity', 'storage_location', 'note', 'image'].forEach(k => {
         if (payload[k] !== undefined) it[k] = (k === 'total_quantity') ? Number(payload[k]) : (k === 'item_type' ? normalizeItemType(payload[k]) : payload[k]);
       });
       return Promise.resolve({ success: true });
@@ -168,11 +169,13 @@ const Mock = (() => {
         purchase_image: type === 'purchase' ? (payload.purchase_image || '') : '',
         purchase_note: type === 'purchase' ? (payload.purchase_note || '') : '',
         purchase_item_type: type === 'purchase' ? normalizeItemType(payload.purchase_item_type) : '',
+        purchase_storage_location: type === 'purchase' ? (payload.purchase_storage_location || '') : '',
         purchase_category: '',
         approved_item_name: '',
         approved_category: '',
         approved_item_type: '',
         approved_quantity: '',
+        approved_storage_location: '',
         approved_note: '',
         approved_image: '',
       };
@@ -199,6 +202,7 @@ const Mock = (() => {
         r.approved_category = approved_item.category || '';
         r.approved_item_type = normalizeItemType(approved_item.item_type);
         r.approved_quantity = Number(approved_item.total_quantity) || '';
+        r.approved_storage_location = approved_item.storage_location || '';
         r.approved_note = approved_item.note || '';
         r.approved_image = approved_item.image || '';
       }
