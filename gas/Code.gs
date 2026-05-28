@@ -134,16 +134,37 @@ function _itemColumns(sheet) {
 
 function _ensureItemTypeColumn(sheet) {
   const headers = _headerMap(sheet);
-  if (headers.item_type) return headers.item_type;
-
-  const col = sheet.getLastColumn() + 1;
-  sheet.getRange(1, col).setValue('item_type').setFontWeight('bold');
+  const categoryCol = headers.category || 3;
+  const desiredCol = categoryCol + 1;
   const lastRow = sheet.getLastRow();
+  const existingCol = headers.item_type || 0;
+
+  if (existingCol === desiredCol) return existingCol;
+
+  if (existingCol) {
+    const values = lastRow > 0 ? sheet.getRange(1, existingCol, lastRow, 1).getValues() : [['item_type']];
+    sheet.insertColumnAfter(categoryCol);
+    sheet.getRange(1, desiredCol, values.length, 1).setValues(values).setFontWeight('bold');
+    const deleteCol = existingCol >= desiredCol ? existingCol + 1 : existingCol;
+    sheet.deleteColumn(deleteCol);
+    return desiredCol;
+  }
+
+  const currentLastCol = sheet.getLastColumn();
+  const headerAtDesired = desiredCol <= currentLastCol
+    ? String(sheet.getRange(1, desiredCol).getValues()[0][0] || '').trim()
+    : '';
+
+  if (headerAtDesired) {
+    sheet.insertColumnAfter(categoryCol);
+  }
+
+  sheet.getRange(1, desiredCol).setValue('item_type').setFontWeight('bold');
   if (lastRow >= 2) {
     const defaults = Array.from({ length: lastRow - 1 }, () => ['物品']);
-    sheet.getRange(2, col, defaults.length, 1).setValues(defaults);
+    sheet.getRange(2, desiredCol, defaults.length, 1).setValues(defaults);
   }
-  return col;
+  return desiredCol;
 }
 
 function _itemFromRow(row, cols) {
@@ -276,6 +297,7 @@ function setupSheets() {
     }
   };
   ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'note', 'image']);
+  _ensureItemTypeColumn(_sheet(ITEMS_SHEET));
   ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo']);
   ensure(REQ_SHEET, _requestHeaders());
   return 'Done';
