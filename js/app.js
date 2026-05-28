@@ -39,6 +39,15 @@ const requestDisplayQuantity = request => Number(
     ? (request.approved_quantity || request.quantity || 0)
     : (request.quantity || 0)
 );
+const getItemType = item => item?.item_type === 'consumable' ? 'consumable' : 'equipment';
+const getItemTypeLabel = item => getItemType(item) === 'consumable' ? '消耗品' : '物品';
+const getRequestItemType = request => {
+  if (isPurchaseRequest(request)) {
+    return request.approved_item_type || request.purchase_item_type || 'equipment';
+  }
+  return request.item_type || 'equipment';
+};
+const getRequestItemTypeLabel = request => getRequestItemType(request) === 'consumable' ? '消耗品' : '物品';
 
 // コメント入力モーダル（Promise を返す）
 function askComment(opts) {
@@ -231,7 +240,7 @@ routes.home = async () => {
           }</div>
           <div class="item-info">
             <div class="item-name">${escape(i.name)}</div>
-            <div class="item-cat">${escape(i.category || '')}</div>
+            <div class="item-cat">${escape(i.category || '')} / ${escape(getItemTypeLabel(i))}</div>
             <div class="item-note">${i.note ? '備考：' + escape(i.note) : ''}</div>
           </div>
         </div>
@@ -279,7 +288,7 @@ routes.detail = async ({ id }) => {
         return `
           <tr>
             <td class="date">${dateStr}</td>
-            <td><span class="tag ${t.type}">${t.type === 'lend' ? '貸出' : '返却'}</span></td>
+            <td><span class="tag ${t.type}">${t.type === 'lend' ? '貸出' : t.type === 'return' ? '返却' : '消耗'}</span></td>
             <td>${escape(t.target)}</td>
             <td class="qty">${t.quantity}</td>
           </tr>`;
@@ -294,6 +303,7 @@ routes.detail = async ({ id }) => {
       <h2>${escape(item.name)}</h2>
       <div class="meta">
         カテゴリ：${escape(item.category || '-')}<br>
+        種別：${escape(getItemTypeLabel(item))}<br>
         備考：${escape(item.note || '-')}
       </div>
     </div>
@@ -375,7 +385,7 @@ const renderActionButtons = request => {
   if (status === 'ready') return `
     <button class="btn-handover" data-act="received">受け渡し完了</button>
     <button class="btn-reject"   data-act="rejected">却下</button>`;
-  if (status === 'received') return `
+  if (status === 'received' && getRequestItemType(request) !== 'consumable') return `
     <button class="btn-return" data-act="returned">返却完了</button>`;
   return '';
 };
@@ -439,6 +449,7 @@ routes.requests = async () => {
         <div class="title">${escape(requestDisplayName(r))} ×${requestDisplayQuantity(r)}</div>
         <div class="info">
           ${escape(r.organization)} / ${escape(r.user_name)}<br>
+          種別：${escape(getRequestItemTypeLabel(r))}<br>
           ${isPurchaseRequest(r)
             ? `備考：${escape(r.purchase_note || '-' )}`
             : `用途：${escape(r.purpose)}`}
@@ -527,7 +538,7 @@ routes.reqDetail = async ({ id }) => {
         r.transactions.map(t => `
           <tr>
             <td class="date">${fmt(t.timestamp)}</td>
-            <td><span class="tag ${t.type}">${t.type === 'lend' ? '貸出' : '返却'}</span></td>
+            <td><span class="tag ${t.type}">${t.type === 'lend' ? '貸出' : t.type === 'return' ? '返却' : '消耗'}</span></td>
             <td class="qty">${t.quantity}</td>
           </tr>`).join('')
       }</table>`
@@ -546,6 +557,7 @@ routes.reqDetail = async ({ id }) => {
         <tr><td>団体名</td><td>${escape(r.organization)}</td></tr>
         <tr><td>利用者</td><td>${escape(r.user_name)}</td></tr>
         <tr><td>メール</td><td>${escape(r.email || '-')}</td></tr>
+        <tr><td>種別</td><td>${escape(getRequestItemTypeLabel(r))}</td></tr>
         ${isPurchaseRequest(r)
           ? `
             <tr><td>申請物品名</td><td>${escape(r.purchase_name || r.item_name || '-')}</td></tr>
@@ -553,6 +565,7 @@ routes.reqDetail = async ({ id }) => {
             <tr><td>備考</td><td>${escape(r.purchase_note || '-')}</td></tr>
             <tr><td>申請画像</td><td>${r.purchase_image ? `<img class="inline-preview" src="${r.purchase_image}" alt="">` : '-'}</td></tr>
             <tr><td>承認後カテゴリ</td><td>${escape(r.approved_category || '-')}</td></tr>
+            <tr><td>承認後種別</td><td>${escape(r.approved_item_type ? getRequestItemTypeLabel({ ...r, approved_item_type: r.approved_item_type, request_type: 'purchase' }) : '-')}</td></tr>
           `
           : `<tr><td>用途</td><td>${escape(r.purpose)}</td></tr>`}
         <tr><td>管理者コメント</td><td>${escape(r.memo || '-')}</td></tr>
@@ -614,6 +627,7 @@ routes.approvePurchase = async ({ id }) => {
   const approvedDraft = {
     name: requestData.approved_item_name || requestData.purchase_name || requestData.item_name || '',
     category: requestData.approved_category || '',
+    item_type: requestData.approved_item_type || requestData.purchase_item_type || 'equipment',
     total_quantity: requestData.approved_quantity || requestData.quantity || 0,
     note: requestData.approved_note || requestData.purchase_note || '',
     image: requestData.approved_image || requestData.purchase_image || '',
@@ -648,6 +662,12 @@ routes.approvePurchase = async ({ id }) => {
         <option value="__new">＋ 新しいカテゴリ</option>
       </select>
       <input name="categoryNew" placeholder="新しいカテゴリ名" hidden style="margin-top:6px" />
+
+      <label>種別<span class="req">*</span></label>
+      <select name="item_type" required>
+        <option value="equipment" ${approvedDraft.item_type === 'equipment' ? 'selected' : ''}>物品</option>
+        <option value="consumable" ${approvedDraft.item_type === 'consumable' ? 'selected' : ''}>消耗品</option>
+      </select>
 
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="1" required value="${approvedDraft.total_quantity}" />
@@ -715,11 +735,12 @@ routes.approvePurchase = async ({ id }) => {
     const approvedItem = {
       name: form.name.value.trim(),
       category,
+      item_type: form.item_type.value,
       total_quantity: Number(form.total_quantity.value),
       note: form.note.value.trim(),
       image: imageDataUrl,
     };
-    if (!approvedItem.name || !approvedItem.category || !approvedItem.total_quantity) {
+    if (!approvedItem.name || !approvedItem.category || !approvedItem.item_type || !approvedItem.total_quantity) {
       showToast('必須項目を入力してください');
       return;
     }
@@ -782,6 +803,12 @@ routes.add = async () => {
       </select>
       <input name="categoryNew" placeholder="新しいカテゴリ名" hidden style="margin-top:6px" />
 
+      <label>種別<span class="req">*</span></label>
+      <select name="item_type" required>
+        <option value="equipment">物品</option>
+        <option value="consumable">消耗品</option>
+      </select>
+
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="0" required inputmode="numeric" placeholder="例) 100" />
 
@@ -842,11 +869,12 @@ routes.add = async () => {
     const payload = {
       name: f.name.value.trim(),
       category: cat,
+      item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
       note: f.note.value.trim(),
       image: imageDataUrl,
     };
-    if (!payload.name || !payload.category) return;
+    if (!payload.name || !payload.category || !payload.item_type) return;
     const btn = f.querySelector('.btn-primary');
     btn.disabled = true; btn.textContent = '送信中…';
     const r = await Api.addItem(payload);
@@ -901,6 +929,12 @@ routes.editItem = async ({ id }) => {
         <option value="__new">＋ 新しいカテゴリ</option>
       </select>
       <input name="categoryNew" placeholder="新しいカテゴリ名" hidden style="margin-top:6px" />
+
+      <label>種別<span class="req">*</span></label>
+      <select name="item_type" required>
+        <option value="equipment" ${getItemType(item) === 'equipment' ? 'selected' : ''}>物品</option>
+        <option value="consumable" ${getItemType(item) === 'consumable' ? 'selected' : ''}>消耗品</option>
+      </select>
 
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="0" required value="${item.total_quantity}" />
@@ -964,11 +998,12 @@ routes.editItem = async ({ id }) => {
       id: item.id,
       name: f.name.value.trim(),
       category: cat,
+      item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
       note: f.note.value.trim(),
       image: imageDataUrl,
     };
-    if (!payload.name || !payload.category) return;
+    if (!payload.name || !payload.category || !payload.item_type) return;
     const btn = f.querySelector('.btn-primary');
     btn.disabled = true; btn.textContent = '更新中…';
     const r = await Api.updateItem(payload);
@@ -1010,7 +1045,7 @@ routes.log = async () => {
     if (!filtered.length) { listEl.innerHTML = '<div class="empty">履歴なし</div>'; return; }
     listEl.innerHTML = filtered.map(l => `
       <div class="log-card">
-        <div class="ic"><span class="tag ${l.type}">${l.type === 'lend' ? '貸出' : '返却'}</span></div>
+        <div class="ic"><span class="tag ${l.type}">${l.type === 'lend' ? '貸出' : l.type === 'return' ? '返却' : '消耗'}</span></div>
         <div class="body">
           <div class="ttl">${escape(l.item_name)} ×${l.quantity}</div>
           <div class="meta">${escape(l.target || '')}</div>

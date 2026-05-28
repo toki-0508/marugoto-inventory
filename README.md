@@ -9,6 +9,7 @@
 - 貸出申請は 申請 → 承認 → 受け渡し → 返却 をステータスで管理
 - 購入申請は管理者が内容を編集して承認すると物品一覧へ登録
 - 申請中 / 承認済みの貸出依頼は「予約済み」として在庫に反映
+- 物品ごとに `物品` / `消耗品` を設定できる
 - 商品画像のアップロード対応
 - PWA としてホーム画面に追加可能
 
@@ -33,13 +34,13 @@ gas/Code.gs             Apps Script バックエンド
 新規のスプレッドシートに 3 つのシートをヘッダ付きで作る。
 
 **items**
-| A: id | B: name | C: category | D: total_quantity | E: note | F: image |
+| A: id | B: name | C: category | D: item_type | E: total_quantity | F: note | G: image |
 
 **transactions**
 | A: id | B: item_id | C: type | D: quantity | E: target | F: timestamp | G: memo |
 
 **requests**
-| A: id | B: item_id | C: item_name | D: quantity | E: organization | F: user_name | G: purpose | H: status | I: created_at | J: processed_at | K: memo | L: email | M: request_type | N: purchase_name | O: purchase_image | P: purchase_note | Q: approved_item_name | R: approved_category | S: approved_quantity | T: approved_note | U: approved_image |
+| A: id | B: item_id | C: item_name | D: quantity | E: organization | F: user_name | G: purpose | H: status | I: created_at | J: processed_at | K: memo | L: email | M: request_type | N: purchase_name | O: purchase_image | P: purchase_note | Q: purchase_item_type | R: approved_item_name | S: approved_category | T: approved_item_type | U: approved_quantity | V: approved_note | W: approved_image |
 
 ### 2. Apps Script を設定
 
@@ -91,7 +92,8 @@ npm run dev
 ```
 
 - **申請中 / 受け取り待ち** の間は「予約済み」として在庫から差し引く
-- **受け渡し完了** 時に予約済みから貸出中へ移る
+- **物品** は受け渡し完了で予約済みから貸出中へ移る
+- **消耗品** は受け渡し完了で処理完了し、返却は発生せず、総数と在庫が減る
 - **返却完了** 時に return トランザクション記録 / 在庫戻る
 
 ### 購入申請
@@ -102,7 +104,7 @@ npm run dev
   └─ 却下 (rejected)
 ```
 
-- 承認時に管理者がカテゴリ・物品名・総数・備考・画像を編集して物品一覧へ登録する
+- 承認時に管理者がカテゴリ・種別・物品名・総数・備考・画像を編集して物品一覧へ登録する
 
 ## ライセンス
 

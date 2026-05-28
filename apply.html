@@ -59,6 +59,12 @@
         <label>物品名<span class="req">*</span></label>
         <input name="purchase_name" placeholder="例) 延長コード" />
 
+        <label>種別<span class="req">*</span></label>
+        <select name="purchase_item_type">
+          <option value="equipment">物品</option>
+          <option value="consumable">消耗品</option>
+        </select>
+
         <label>総数<span class="req">*</span></label>
         <input name="purchase_quantity" type="number" min="1" inputmode="numeric" placeholder="例) 20" />
 

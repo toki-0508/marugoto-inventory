@@ -120,6 +120,7 @@
     form.quantity.required = requestType === 'loan';
     form.purpose.required = requestType === 'loan';
     form.purchase_name.required = requestType === 'purchase';
+    form.purchase_item_type.required = requestType === 'purchase';
     form.purchase_quantity.required = requestType === 'purchase';
     submitBtn.textContent = requestType === 'purchase' ? 'この内容で購入申請する' : 'この内容で申請する';
     qtyErr.hidden = true;
@@ -280,6 +281,7 @@
       ? {
           ...basePayload,
           purchase_name: form.purchase_name.value.trim(),
+          purchase_item_type: form.purchase_item_type.value,
           purchase_quantity: Number(form.purchase_quantity.value),
           purchase_note: form.purchase_note.value.trim(),
           purchase_image: purchaseImageDataUrl,
@@ -292,7 +294,7 @@
         };
 
     const isInvalid = requestType === 'purchase'
-      ? (!payload.purchase_name || !payload.purchase_quantity || !payload.organization || !payload.user_name || !payload.email)
+      ? (!payload.purchase_name || !payload.purchase_item_type || !payload.purchase_quantity || !payload.organization || !payload.user_name || !payload.email)
       : (!payload.item_id || !payload.quantity || !payload.organization || !payload.user_name || !payload.email || !payload.purpose);
     if (isInvalid) {
       showToast('必須項目を入力してください');
