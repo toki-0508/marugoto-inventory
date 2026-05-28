@@ -26,6 +26,20 @@ const showToast = msg => {
   showToast._t = setTimeout(() => { toast.hidden = true; }, 1800);
 };
 
+const getRequestType = request => request.request_type === 'purchase' ? 'purchase' : 'loan';
+const isPurchaseRequest = request => getRequestType(request) === 'purchase';
+const requestDisplayName = request => {
+  if (isPurchaseRequest(request)) {
+    return request.approved_item_name || request.purchase_name || request.item_name || '購入申請';
+  }
+  return request.item_name || '';
+};
+const requestDisplayQuantity = request => Number(
+  isPurchaseRequest(request)
+    ? (request.approved_quantity || request.quantity || 0)
+    : (request.quantity || 0)
+);
+
 // コメント入力モーダル（Promise を返す）
 function askComment(opts) {
   return new Promise(resolve => {
@@ -221,9 +235,10 @@ routes.home = async () => {
             <div class="item-note">${i.note ? '備考：' + escape(i.note) : ''}</div>
           </div>
         </div>
-        <div class="stats-mini">
+        <div class="stats-mini stats-mini-4">
           <div class="stat-mini total"><div class="lbl">総数</div><div class="num">${i.total_quantity}</div></div>
           <div class="stat-mini stock"><div class="lbl">在庫</div><div class="num">${i.current_quantity}</div></div>
+          <div class="stat-mini reserved"><div class="lbl">予約済み</div><div class="num">${i.reserved_quantity || 0}</div></div>
           <div class="stat-mini lent"><div class="lbl">貸出中</div><div class="num">${i.lent_quantity}</div></div>
         </div>
       </div>
@@ -250,6 +265,10 @@ routes.detail = async ({ id }) => {
   const breakdownRows = item.breakdown.length
     ? item.breakdown.map(b => `<tr><td>${escape(b.target)}</td><td>${b.quantity}</td></tr>`).join('') +
       `<tr class="total-row"><td>合計</td><td>${item.lent_quantity}</td></tr>`
+    : `<tr><td colspan="2" class="empty-msg" style="text-align:center">なし</td></tr>`;
+  const reservedRows = item.reserved_breakdown.length
+    ? item.reserved_breakdown.map(b => `<tr><td>${escape(b.target)}</td><td>${b.quantity}</td></tr>`).join('') +
+      `<tr class="total-row"><td>合計</td><td>${item.reserved_quantity || 0}</td></tr>`
     : `<tr><td colspan="2" class="empty-msg" style="text-align:center">なし</td></tr>`;
 
   const histRows = item.transactions.length
@@ -279,10 +298,16 @@ routes.detail = async ({ id }) => {
       </div>
     </div>
 
-    <div class="big-stats">
+    <div class="big-stats big-stats-4">
       <div class="big-stat total"><div class="lbl">総数</div><div class="num">${item.total_quantity}</div></div>
       <div class="big-stat stock"><div class="lbl">在庫</div><div class="num">${item.current_quantity}</div></div>
+      <div class="big-stat reserved"><div class="lbl">予約済み</div><div class="num">${item.reserved_quantity || 0}</div></div>
       <div class="big-stat lent"><div class="lbl">貸出中</div><div class="num">${item.lent_quantity}</div></div>
+    </div>
+
+    <div class="section">
+      <h3>現在の予約内訳</h3>
+      <table class="kv-table">${reservedRows}</table>
     </div>
 
     <div class="section">
@@ -322,17 +347,28 @@ const STATUS_LABEL = {
   ready:    '受け取り待ち',
   received: '受け取り済',
   returned: '返却完了',
+  approved: '登録済み',
   rejected: '却下',
 };
-const STATUS_ORDER = { pending: 0, ready: 1, received: 2, returned: 3, rejected: 4 };
+const STATUS_ORDER = { pending: 0, ready: 1, received: 2, returned: 3, approved: 4, rejected: 5 };
 const ACTION_LABEL = {
   ready:    '承認',
   rejected: '却下',
   received: '受け渡し完了',
   returned: '返却完了',
+  approved: '登録',
 };
 
-const renderActionButtons = status => {
+const REQUEST_TYPE_LABEL = {
+  loan: '貸出申請',
+  purchase: '購入申請',
+};
+
+const renderActionButtons = request => {
+  const status = request.status;
+  if (isPurchaseRequest(request) && status === 'pending') return `
+    <button class="btn-approve" data-act="approved">登録する</button>
+    <button class="btn-reject"  data-act="rejected">却下</button>`;
   if (status === 'pending') return `
     <button class="btn-approve" data-act="ready">承認</button>
     <button class="btn-reject"  data-act="rejected">却下</button>`;
@@ -347,8 +383,8 @@ const renderActionButtons = status => {
 routes.requests = async () => {
   setHeader('申請一覧', false);
   setTabActive('requests');
-  const filterPills = ['', 'pending', 'ready', 'received', 'returned', 'rejected'];
-  const filterLabels = ['すべて', '申請中', '受け取り待ち', '受け取り済', '返却完了', '却下'];
+  const filterPills = ['', 'pending', 'ready', 'received', 'returned', 'approved', 'rejected'];
+  const filterLabels = ['すべて', '申請中', '受け取り待ち', '受け取り済', '返却完了', '登録済み', '却下'];
 
   view.innerHTML = `
     <div class="search-bar">
@@ -365,6 +401,7 @@ routes.requests = async () => {
         <option value="old">古い順</option>
         <option value="status">ステータス順</option>
         <option value="item">物品名順</option>
+        <option value="type">申請種別順</option>
       </select>
     </div>
     <div id="reqList"><div class="loading">読み込み中…</div></div>
@@ -384,7 +421,8 @@ routes.requests = async () => {
     filtered.sort((a, b) => {
       if (so === 'old')    return new Date(a.created_at) - new Date(b.created_at);
       if (so === 'status') return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
-      if (so === 'item')   return a.item_name.localeCompare(b.item_name, 'ja');
+      if (so === 'item')   return requestDisplayName(a).localeCompare(requestDisplayName(b), 'ja');
+      if (so === 'type')   return REQUEST_TYPE_LABEL[getRequestType(a)].localeCompare(REQUEST_TYPE_LABEL[getRequestType(b)], 'ja');
       return new Date(b.created_at) - new Date(a.created_at);
     });
 
@@ -392,16 +430,21 @@ routes.requests = async () => {
     list.innerHTML = filtered.map(r => `
       <div class="req-card" data-id="${r.id}">
         <div class="top">
-          <span class="status status-${r.status}">${STATUS_LABEL[r.status]}</span>
+          <div class="req-badges">
+            <span class="status status-${r.status}">${STATUS_LABEL[r.status]}</span>
+            <span class="request-type-badge request-type-${getRequestType(r)}">${REQUEST_TYPE_LABEL[getRequestType(r)]}</span>
+          </div>
           <span class="ts">${fmt(r.created_at)}</span>
         </div>
-        <div class="title">${escape(r.item_name)} ×${r.quantity}</div>
+        <div class="title">${escape(requestDisplayName(r))} ×${requestDisplayQuantity(r)}</div>
         <div class="info">
           ${escape(r.organization)} / ${escape(r.user_name)}<br>
-          用途：${escape(r.purpose)}
+          ${isPurchaseRequest(r)
+            ? `備考：${escape(r.purchase_note || '-' )}`
+            : `用途：${escape(r.purpose)}`}
         </div>
-        ${renderActionButtons(r.status) ?
-          `<div class="actions">${renderActionButtons(r.status)}</div>` : ''}
+        ${renderActionButtons(r) ?
+          `<div class="actions">${renderActionButtons(r)}</div>` : ''}
       </div>
     `).join('');
 
@@ -415,6 +458,10 @@ routes.requests = async () => {
         b.addEventListener('click', async e => {
           e.stopPropagation();
           const act = b.dataset.act;
+          if (act === 'approved') {
+            go('approvePurchase', { id });
+            return;
+          }
           b.disabled = true;
           const res = await performAction(act, id);
           b.disabled = false;
@@ -458,7 +505,7 @@ routes.reqDetail = async ({ id }) => {
   if (error || !r) { view.innerHTML = `<div class="empty">読み込みに失敗</div>`; return; }
 
   // 処理履歴のタイムライン
-  const tlEvents = [{ ts: r.created_at, label: '申請' }];
+  const tlEvents = [{ ts: r.created_at, label: isPurchaseRequest(r) ? '購入申請' : '申請' }];
   if (r.processed_at && r.status !== 'pending') {
     tlEvents.push({
       ts: r.processed_at,
@@ -484,13 +531,14 @@ routes.reqDetail = async ({ id }) => {
             <td class="qty">${t.quantity}</td>
           </tr>`).join('')
       }</table>`
-    : `<div class="empty-msg">まだ貸出処理は行われていません</div>`;
+    : `<div class="empty-msg">${isPurchaseRequest(r) ? '購入申請では貸出履歴はありません' : 'まだ貸出処理は行われていません'}</div>`;
 
   view.innerHTML = `
     <div class="req-banner">
       <div class="status-big status-${r.status}">${STATUS_LABEL[r.status]}</div>
       <div class="ts">${fmt(r.created_at)} 申請</div>
-      <h2>${escape(r.item_name)} × ${r.quantity}</h2>
+      <div class="request-type-inline request-type-${getRequestType(r)}">${REQUEST_TYPE_LABEL[getRequestType(r)]}</div>
+      <h2>${escape(requestDisplayName(r))} × ${requestDisplayQuantity(r)}</h2>
     </div>
 
     <div class="section">
@@ -498,7 +546,15 @@ routes.reqDetail = async ({ id }) => {
         <tr><td>団体名</td><td>${escape(r.organization)}</td></tr>
         <tr><td>利用者</td><td>${escape(r.user_name)}</td></tr>
         <tr><td>メール</td><td>${escape(r.email || '-')}</td></tr>
-        <tr><td>用途</td><td>${escape(r.purpose)}</td></tr>
+        ${isPurchaseRequest(r)
+          ? `
+            <tr><td>申請物品名</td><td>${escape(r.purchase_name || r.item_name || '-')}</td></tr>
+            <tr><td>申請総数</td><td>${requestDisplayQuantity(r)}</td></tr>
+            <tr><td>備考</td><td>${escape(r.purchase_note || '-')}</td></tr>
+            <tr><td>申請画像</td><td>${r.purchase_image ? `<img class="inline-preview" src="${r.purchase_image}" alt="">` : '-'}</td></tr>
+            <tr><td>承認後カテゴリ</td><td>${escape(r.approved_category || '-')}</td></tr>
+          `
+          : `<tr><td>用途</td><td>${escape(r.purpose)}</td></tr>`}
         <tr><td>管理者コメント</td><td>${escape(r.memo || '-')}</td></tr>
       </table>
     </div>
@@ -509,17 +565,21 @@ routes.reqDetail = async ({ id }) => {
     </div>
 
     <div class="section">
-      <h3>貸出履歴</h3>
+      <h3>${isPurchaseRequest(r) ? '処理結果' : '貸出履歴'}</h3>
       ${txList}
     </div>
 
-    ${renderActionButtons(r.status) ?
-      `<div class="req-action-row">${renderActionButtons(r.status)}</div>` : ''}
+    ${renderActionButtons(r) ?
+      `<div class="req-action-row">${renderActionButtons(r)}</div>` : ''}
   `;
 
   view.querySelectorAll('button[data-act]').forEach(b => {
     b.addEventListener('click', async () => {
       const act = b.dataset.act;
+      if (act === 'approved') {
+        go('approvePurchase', { id: r.id });
+        return;
+      }
       b.disabled = true;
       const res = await performAction(act, r.id);
       b.disabled = false;
@@ -533,7 +593,159 @@ routes.reqDetail = async ({ id }) => {
 };
 
 // ====================================================================
-// 5. 物品追加
+// 5. 購入申請の承認
+// ====================================================================
+routes.approvePurchase = async ({ id }) => {
+  setHeader('購入申請の登録', true);
+  setTabActive('requests');
+  view.innerHTML = `<div class="loading">読み込み中…</div>`;
+
+  if (!State.items.length) {
+    const { items = [] } = await Api.getItems();
+    State.items = items;
+  }
+  const cats = [...new Set(State.items.map(i => i.category).filter(Boolean))];
+  const { request: requestData, error } = await Api.getRequestDetail(id);
+  if (error || !requestData || !isPurchaseRequest(requestData)) {
+    view.innerHTML = `<div class="empty">購入申請の読み込みに失敗しました</div>`;
+    return;
+  }
+
+  const approvedDraft = {
+    name: requestData.approved_item_name || requestData.purchase_name || requestData.item_name || '',
+    category: requestData.approved_category || '',
+    total_quantity: requestData.approved_quantity || requestData.quantity || 0,
+    note: requestData.approved_note || requestData.purchase_note || '',
+    image: requestData.approved_image || requestData.purchase_image || '',
+  };
+
+  view.innerHTML = `
+    <form class="form-page" id="approvePurchaseForm">
+      <div class="request-summary-card">
+        <div class="request-type-inline request-type-purchase">購入申請</div>
+        <h3>${escape(requestData.purchase_name || requestData.item_name || '')}</h3>
+        <p>${escape(requestData.organization)} / ${escape(requestData.user_name)}</p>
+      </div>
+
+      <label>購入画像</label>
+      <input type="file" id="imgFile" accept="image/*" hidden />
+      <label for="imgFile" class="image-drop" id="imgDrop">
+        <span class="placeholder">
+          <span class="ic">📷</span>
+          <span>タップして画像を選択（任意）</span>
+        </span>
+        <img id="imgPreview" alt="" hidden />
+        <button type="button" id="imgClear" class="img-clear" hidden>×</button>
+      </label>
+
+      <label>物品名<span class="req">*</span></label>
+      <input name="name" required value="${escape(approvedDraft.name)}" />
+
+      <label>カテゴリ<span class="req">*</span></label>
+      <select name="category" required>
+        <option value="">選択してください</option>
+        ${cats.map(c => `<option ${c === approvedDraft.category ? 'selected' : ''}>${escape(c)}</option>`).join('')}
+        <option value="__new">＋ 新しいカテゴリ</option>
+      </select>
+      <input name="categoryNew" placeholder="新しいカテゴリ名" hidden style="margin-top:6px" />
+
+      <label>総数<span class="req">*</span></label>
+      <input name="total_quantity" type="number" min="1" required value="${approvedDraft.total_quantity}" />
+
+      <label>備考</label>
+      <textarea name="note" rows="3">${escape(approvedDraft.note || '')}</textarea>
+
+      <label>管理者コメント</label>
+      <textarea name="memo" rows="3" placeholder="任意でコメントを追加">${escape(requestData.memo || '')}</textarea>
+
+      <button class="btn-primary" type="submit">この内容で登録する</button>
+    </form>
+  `;
+
+  const form = view.querySelector('#approvePurchaseForm');
+  form.category.addEventListener('change', () => {
+    form.categoryNew.hidden = form.category.value !== '__new';
+  });
+
+  const fileInput = view.querySelector('#imgFile');
+  const preview = view.querySelector('#imgPreview');
+  const placeholder = view.querySelector('#imgDrop .placeholder');
+  const clearBtn = view.querySelector('#imgClear');
+  let imageDataUrl = approvedDraft.image || '';
+
+  const setPreview = url => {
+    imageDataUrl = url;
+    if (url) {
+      preview.src = url;
+      preview.hidden = false;
+      placeholder.style.display = 'none';
+      clearBtn.hidden = false;
+    } else {
+      preview.src = '';
+      preview.hidden = true;
+      placeholder.style.display = '';
+      clearBtn.hidden = true;
+    }
+  };
+  if (imageDataUrl) setPreview(imageDataUrl);
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('画像ファイルを選択してください');
+      return;
+    }
+    try {
+      setPreview(await resizeImage(file));
+    } catch (err) {
+      showToast('画像の読み込みに失敗しました');
+    }
+  });
+  clearBtn.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    fileInput.value = '';
+    setPreview('');
+  });
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const category = form.category.value === '__new' ? form.categoryNew.value.trim() : form.category.value;
+    const approvedItem = {
+      name: form.name.value.trim(),
+      category,
+      total_quantity: Number(form.total_quantity.value),
+      note: form.note.value.trim(),
+      image: imageDataUrl,
+    };
+    if (!approvedItem.name || !approvedItem.category || !approvedItem.total_quantity) {
+      showToast('必須項目を入力してください');
+      return;
+    }
+    const btn = form.querySelector('.btn-primary');
+    btn.disabled = true;
+    btn.textContent = '登録中…';
+    const result = await Api.updateRequestStatus({
+      id: requestData.id,
+      status: 'approved',
+      memo: form.memo.value.trim(),
+      approved_item: approvedItem,
+    });
+    btn.disabled = false;
+    btn.textContent = 'この内容で登録する';
+    if (result.error) {
+      showToast('エラー: ' + result.error);
+      return;
+    }
+    showToast('物品一覧へ登録しました');
+    State.items = [];
+    go('reqDetail', { id: requestData.id });
+  });
+};
+
+// ====================================================================
+// 6. 物品追加
 // ====================================================================
 routes.add = async () => {
   setHeader('物品追加', false);

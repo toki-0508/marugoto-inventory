@@ -10,7 +10,9 @@
  *    シート名: requests
  *      A1: id  B1: item_id  C1: item_name  D1: quantity  E1: organization
  *      F1: user_name  G1: purpose  H1: status  I1: created_at  J1: processed_at
- *      K1: memo  L1: email
+ *      K1: memo  L1: email  M1: request_type  N1: purchase_name  O1: purchase_image
+ *      P1: purchase_note  Q1: approved_item_name  R1: approved_category
+ *      S1: approved_quantity  T1: approved_note  U1: approved_image
  *
  * 2) Apps Script エディタを開いて、このファイルの中身を貼り付ける
  *
@@ -27,6 +29,7 @@ const SHEET_ID = '';                 // ← デプロイ時に各自のスプレ
 const ITEMS_SHEET = 'items';
 const TX_SHEET = 'transactions';
 const REQ_SHEET = 'requests';
+const ACTIVE_RESERVATION_STATUSES = { pending: true, ready: true };
 
 function doGet(e) {
   return _respond(() => {
@@ -86,6 +89,86 @@ function _nextId(sheet) {
   return max + 1;
 }
 
+function _toIso(value) {
+  return value instanceof Date ? value.toISOString() : String(value || '');
+}
+
+function _requestHeaders() {
+  return [
+    'id', 'item_id', 'item_name', 'quantity', 'organization', 'user_name',
+    'purpose', 'status', 'created_at', 'processed_at', 'memo', 'email',
+    'request_type', 'purchase_name', 'purchase_image', 'purchase_note',
+    'approved_item_name', 'approved_category', 'approved_quantity',
+    'approved_note', 'approved_image'
+  ];
+}
+
+function _normalizeRequestRow(row) {
+  return {
+    id: row[0],
+    item_id: row[1],
+    item_name: row[2] || '',
+    quantity: Number(row[3]) || 0,
+    organization: row[4] || '',
+    user_name: row[5] || '',
+    purpose: row[6] || '',
+    status: row[7] || 'pending',
+    created_at: _toIso(row[8]),
+    processed_at: _toIso(row[9]),
+    memo: row[10] || '',
+    email: row[11] || '',
+    request_type: row[12] || 'loan',
+    purchase_name: row[13] || '',
+    purchase_image: row[14] || '',
+    purchase_note: row[15] || '',
+    approved_item_name: row[16] || '',
+    approved_category: row[17] || '',
+    approved_quantity: Number(row[18]) || 0,
+    approved_note: row[19] || '',
+    approved_image: row[20] || ''
+  };
+}
+
+function _getRequestsData() {
+  const values = _sheet(REQ_SHEET).getDataRange().getValues();
+  const list = [];
+  for (let i = 1; i < values.length; i++) {
+    if (!values[i][0]) continue;
+    list.push(_normalizeRequestRow(values[i]));
+  }
+  return list;
+}
+
+function _getReservationMap() {
+  const map = {};
+  const requests = _getRequestsData();
+  for (let i = 0; i < requests.length; i++) {
+    const req = requests[i];
+    if (req.request_type !== 'loan') continue;
+    if (!ACTIVE_RESERVATION_STATUSES[req.status]) continue;
+    const itemId = req.item_id;
+    if (!itemId) continue;
+    if (!map[itemId]) map[itemId] = { reserved: 0, breakdown: {} };
+    map[itemId].reserved += req.quantity;
+    const target = req.organization + '（' + req.user_name + '）';
+    map[itemId].breakdown[target] = (map[itemId].breakdown[target] || 0) + req.quantity;
+  }
+  return map;
+}
+
+function _buildApprovedPurchaseDraft(req, approvedItem) {
+  const quantity = Number(
+    (approvedItem && approvedItem.total_quantity) || req.approved_quantity || req.quantity || 0
+  ) || 0;
+  return {
+    name: (approvedItem && approvedItem.name) || req.approved_item_name || req.purchase_name || req.item_name || '',
+    category: (approvedItem && approvedItem.category) || req.approved_category || '',
+    total_quantity: quantity,
+    note: (approvedItem && approvedItem.note) || req.approved_note || req.purchase_note || '',
+    image: (approvedItem && approvedItem.image) || req.approved_image || req.purchase_image || ''
+  };
+}
+
 /**
  * 必要な 3 シートをヘッダ付きで自動作成する。
  * Apps Script のエディタで関数選択 → 実行ボタンを押すだけ。
@@ -107,14 +190,14 @@ function setupSheets() {
   };
   ensure(ITEMS_SHEET, ['id', 'name', 'category', 'total_quantity', 'note', 'image']);
   ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo']);
-  ensure(REQ_SHEET,   ['id', 'item_id', 'item_name', 'quantity', 'organization', 'user_name',
-                       'purpose', 'status', 'created_at', 'processed_at', 'memo', 'email']);
+  ensure(REQ_SHEET, _requestHeaders());
   return 'Done';
 }
 
 function getItems() {
   const items = _sheet(ITEMS_SHEET).getDataRange().getValues();
   const tx    = _sheet(TX_SHEET).getDataRange().getValues();
+  const reservations = _getReservationMap();
 
   const stock = {};
   for (let i = 1; i < tx.length; i++) {
@@ -130,10 +213,12 @@ function getItems() {
     const [id, name, category, total, note, image] = items[i];
     if (!id) continue;
     const s = stock[id] || { lent: 0, ret: 0 };
+    const reserved = reservations[id] ? reservations[id].reserved : 0;
     result.push({
       id, name, category,
       total_quantity: Number(total) || 0,
-      current_quantity: (Number(total) || 0) - s.lent + s.ret,
+      current_quantity: (Number(total) || 0) - reserved - s.lent + s.ret,
+      reserved_quantity: reserved,
       lent_quantity: s.lent - s.ret,
       note: note || '',
       image: image || ''
@@ -159,6 +244,7 @@ function getItemDetail(itemId) {
   if (!item) return { error: 'item not found' };
 
   const tx = _sheet(TX_SHEET).getDataRange().getValues();
+  const reservations = _getReservationMap();
   const transactions = [];
   const map = {};
   let lent = 0, ret = 0;
@@ -175,12 +261,16 @@ function getItemDetail(itemId) {
     if (type === 'return') { ret  += q; map[target] = (map[target] || 0) - q; }
   }
 
-  item.current_quantity = item.total_quantity - lent + ret;
+  const reservation = reservations[itemId] || { reserved: 0, breakdown: {} };
+  item.current_quantity = item.total_quantity - reservation.reserved - lent + ret;
+  item.reserved_quantity = reservation.reserved;
   item.lent_quantity = lent - ret;
   item.transactions = transactions.reverse();
   item.breakdown = Object.keys(map)
     .filter(k => map[k] > 0)
     .map(k => ({ target: k, quantity: map[k] }));
+  item.reserved_breakdown = Object.keys(reservation.breakdown)
+    .map(k => ({ target: k, quantity: reservation.breakdown[k] }));
 
   return { item };
 }
@@ -241,66 +331,83 @@ function deleteItem(p) {
 }
 
 function getRequests() {
-  const sheet = _sheet(REQ_SHEET);
-  const values = sheet.getDataRange().getValues();
-  const list = [];
-  for (let i = 1; i < values.length; i++) {
-    const [id, item_id, item_name, qty, organization, user_name, purpose,
-           status, created_at, processed_at, memo, email] = values[i];
-    if (!id) continue;
-    list.push({
-      id, item_id, item_name,
-      quantity: Number(qty),
-      organization, user_name, purpose,
-      status: status || 'pending',
-      created_at:   created_at   instanceof Date ? created_at.toISOString()   : String(created_at || ''),
-      processed_at: processed_at instanceof Date ? processed_at.toISOString() : String(processed_at || ''),
-      memo: memo || '',
-      email: email || ''
-    });
-  }
-  return { requests: list.reverse() };
+  return { requests: _getRequestsData().reverse() };
 }
 
 function addRequest(p) {
-  if (!p || !p.item_id || !p.quantity || !p.organization || !p.user_name || !p.purpose) {
+  if (!p || !p.organization || !p.user_name || !p.email) {
     return { error: 'invalid payload' };
   }
-  // 物品名はサーバ側で確定させる
+  const requestType = p.request_type === 'purchase' ? 'purchase' : 'loan';
   const items = _sheet(ITEMS_SHEET).getDataRange().getValues();
+  let item_id = '';
   let item_name = '';
-  for (let i = 1; i < items.length; i++) {
-    if (items[i][0] == p.item_id) { item_name = items[i][1]; break; }
+  let quantity = 0;
+  let purpose = '';
+  let purchase_name = '';
+  let purchase_image = '';
+  let purchase_note = '';
+
+  if (requestType === 'loan') {
+    if (!p.item_id || !p.quantity || !p.purpose) return { error: 'invalid payload' };
+    let item = null;
+    for (let i = 1; i < items.length; i++) {
+      if (items[i][0] == p.item_id) {
+        item = {
+          id: items[i][0],
+          name: items[i][1],
+          total_quantity: Number(items[i][3]) || 0
+        };
+        break;
+      }
+    }
+    if (!item) return { error: 'item not found' };
+
+    const tx = _sheet(TX_SHEET).getDataRange().getValues();
+    let lent = 0;
+    let ret = 0;
+    for (let i = 1; i < tx.length; i++) {
+      if (tx[i][1] != item.id) continue;
+      if (tx[i][2] === 'lend') lent += Number(tx[i][3]) || 0;
+      if (tx[i][2] === 'return') ret += Number(tx[i][3]) || 0;
+    }
+    const reservations = _getReservationMap();
+    const reserved = reservations[item.id] ? reservations[item.id].reserved : 0;
+    const available = item.total_quantity - reserved - lent + ret;
+    quantity = Number(p.quantity) || 0;
+    if (!quantity || quantity > available) {
+      return { error: '在庫不足です（利用可能 ' + available + '）' };
+    }
+    item_id = Number(p.item_id);
+    item_name = item.name;
+    purpose = p.purpose;
+  } else {
+    purchase_name = String(p.purchase_name || '').trim();
+    quantity = Number(p.purchase_quantity) || 0;
+    purchase_image = p.purchase_image || '';
+    purchase_note = p.purchase_note || '';
+    if (!purchase_name || !quantity) return { error: 'invalid payload' };
+    item_name = purchase_name;
   }
-  if (!item_name) return { error: 'item not found' };
 
   const sheet = _sheet(REQ_SHEET);
   const newId = _nextId(sheet);
   sheet.appendRow([
-    newId, Number(p.item_id), item_name, Number(p.quantity),
-    p.organization, p.user_name, p.purpose,
-    'pending', new Date(), '', '', p.email || ''
+    newId, item_id ? Number(item_id) : '', item_name, quantity,
+    p.organization, p.user_name, purpose,
+    'pending', new Date(), '', '', p.email || '',
+    requestType, purchase_name, purchase_image, purchase_note,
+    '', '', '', '', ''
   ]);
   return { success: true, id: newId };
 }
 
 function getRequestDetail(id) {
-  const sheet = _sheet(REQ_SHEET);
-  const values = sheet.getDataRange().getValues();
+  const values = _sheet(REQ_SHEET).getDataRange().getValues();
   let r = null;
   for (let i = 1; i < values.length; i++) {
     if (values[i][0] == id) {
-      const v = values[i];
-      r = {
-        id: v[0], item_id: v[1], item_name: v[2],
-        quantity: Number(v[3]),
-        organization: v[4], user_name: v[5], purpose: v[6],
-        status: v[7] || 'pending',
-        created_at:   v[8]  instanceof Date ? v[8].toISOString()  : String(v[8]  || ''),
-        processed_at: v[9]  instanceof Date ? v[9].toISOString()  : String(v[9]  || ''),
-        memo: v[10] || '',
-        email: v[11] || ''
-      };
+      r = _normalizeRequestRow(values[i]);
       break;
     }
   }
@@ -325,7 +432,7 @@ function getRequestDetail(id) {
 
 function updateRequestStatus(p) {
   if (!p || !p.id || !p.status) return { error: 'invalid payload' };
-  const allowed = ['pending', 'ready', 'received', 'returned', 'rejected'];
+  const allowed = ['pending', 'ready', 'received', 'returned', 'rejected', 'approved'];
   if (allowed.indexOf(p.status) === -1) return { error: 'invalid status' };
 
   const sheet = _sheet(REQ_SHEET);
@@ -336,28 +443,50 @@ function updateRequestStatus(p) {
   }
   if (rowIdx === -1) return { error: 'request not found' };
 
+  const request = _normalizeRequestRow(row);
+  if (request.request_type === 'purchase' && p.status === 'approved' && request.status === 'approved') {
+    return { error: 'already approved' };
+  }
+  if (request.request_type === 'purchase' && p.status === 'approved') {
+    const approvedItem = p.approved_item || {};
+    const draft = _buildApprovedPurchaseDraft(request, approvedItem);
+    if (!draft.name || !draft.category || !draft.total_quantity) {
+      return { error: 'approved item is invalid' };
+    }
+    const itemSheet = _sheet(ITEMS_SHEET);
+    const newItemId = _nextId(itemSheet);
+    itemSheet.appendRow([
+      newItemId, draft.name, draft.category, draft.total_quantity, draft.note, draft.image
+    ]);
+    sheet.getRange(rowIdx, 17).setValue(draft.name);            // Q: approved_item_name
+    sheet.getRange(rowIdx, 18).setValue(draft.category);        // R: approved_category
+    sheet.getRange(rowIdx, 19).setValue(draft.total_quantity);  // S: approved_quantity
+    sheet.getRange(rowIdx, 20).setValue(draft.note);            // T: approved_note
+    sheet.getRange(rowIdx, 21).setValue(draft.image);           // U: approved_image
+  }
+
   sheet.getRange(rowIdx, 8).setValue(p.status);                    // H: status
   sheet.getRange(rowIdx, 10).setValue(new Date());                 // J: processed_at
   if (p.memo != null) sheet.getRange(rowIdx, 11).setValue(p.memo); // K: memo
 
   // 受け渡し完了 → lend、返却完了 → return を自動記録
-  if (p.status === 'received' || p.status === 'returned') {
+  if (request.request_type === 'loan' && (p.status === 'received' || p.status === 'returned')) {
     const txSheet = _sheet(TX_SHEET);
     const newId = _nextId(txSheet);
-    const target = `${row[4]}（${row[5]}）`; // organization (user_name)
+    const target = request.organization + '（' + request.user_name + '）';
     const isReturn = p.status === 'returned';
     txSheet.appendRow([
-      newId, Number(row[1]), isReturn ? 'return' : 'lend',
-      Number(row[3]), target, new Date(),
-      `申請#${row[0]}${isReturn ? ' 返却' : ''}`
+      newId, Number(request.item_id), isReturn ? 'return' : 'lend',
+      Number(request.quantity), target, new Date(),
+      '申請#' + request.id + (isReturn ? ' 返却' : '')
     ]);
   }
 
-  // 承認 (ready) / 却下 (rejected) のときメール通知
+  // 承認 / 却下 のときメール通知
   let mail_status = 'skipped';
   let mail_error = '';
-  if (p.status === 'ready' || p.status === 'rejected') {
-    const email = row[11] || '';
+  if (p.status === 'ready' || p.status === 'approved' || p.status === 'rejected') {
+    const email = request.email || '';
     if (!email) {
       mail_status = 'no_email';
     } else {
@@ -365,11 +494,15 @@ function updateRequestStatus(p) {
         sendStatusEmail({
           to: email,
           status: p.status,
-          requesterName: row[5],
-          itemName: row[2],
-          quantity: row[3],
-          organization: row[4],
-          adminComment: p.memo || ''
+          requestType: request.request_type,
+          requesterName: request.user_name,
+          itemName: request.item_name,
+          quantity: request.quantity,
+          organization: request.organization,
+          adminComment: p.memo || '',
+          approvedItemName: request.request_type === 'purchase'
+            ? ((p.approved_item && p.approved_item.name) || request.approved_item_name || request.purchase_name || request.item_name)
+            : ''
         });
         mail_status = 'sent';
       } catch (e) {
@@ -396,26 +529,37 @@ function testEmail() {
 }
 
 function sendStatusEmail(o) {
-  const isApprove = o.status === 'ready';
-  const subject = isApprove
-    ? '【まるごと祭 物品管理】申請が承認されました'
-    : '【まるごと祭 物品管理】申請が却下されました';
+  const isRejected = o.status === 'rejected';
+  const isPurchase = o.requestType === 'purchase';
+  const isApprove = !isRejected;
+  const subject = isRejected
+    ? '【まるごと祭 物品管理】申請が却下されました'
+    : isPurchase
+      ? '【まるごと祭 物品管理】購入申請が承認されました'
+      : '【まるごと祭 物品管理】申請が承認されました';
   const lines = [];
   lines.push(`${o.requesterName} 様`);
   lines.push('');
-  lines.push(isApprove ? '以下の物品申請が承認されました。' : '以下の物品申請は却下されました。');
+  if (isPurchase) {
+    lines.push(isApprove ? '以下の物品購入申請が承認されました。' : '以下の物品購入申請は却下されました。');
+  } else {
+    lines.push(isApprove ? '以下の物品申請が承認されました。' : '以下の物品申請は却下されました。');
+  }
   lines.push('');
-  lines.push(`物品 : ${o.itemName}`);
+  lines.push(`物品 : ${o.approvedItemName || o.itemName}`);
   lines.push(`数量 : ${o.quantity}`);
   lines.push(`団体 : ${o.organization}`);
   lines.push('');
   if (o.adminComment) {
-    lines.push(isApprove ? '【受け取りについて】' : '【却下理由】');
+    lines.push(isApprove && !isPurchase ? '【受け取りについて】' : isApprove ? '【管理者コメント】' : '【却下理由】');
     lines.push(o.adminComment);
     lines.push('');
   }
-  if (isApprove) {
+  if (isApprove && !isPurchase) {
     lines.push('上記の指示に従って受け取りに来てください。');
+    lines.push('');
+  } else if (isApprove && isPurchase) {
+    lines.push('承認後の内容で物品一覧へ登録しました。');
     lines.push('');
   }
   lines.push('-- まるごと祭 物品管理');

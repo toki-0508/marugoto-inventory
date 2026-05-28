@@ -14,6 +14,11 @@
 
   <main id="view" style="padding-bottom: 24px">
     <form class="form-page" id="applyForm">
+      <div class="request-switch" id="requestSwitch">
+        <button type="button" class="request-switch-btn active" data-type="loan">物品申請</button>
+        <button type="button" class="request-switch-btn" data-type="purchase">物品購入申請</button>
+      </div>
+
       <label>団体名<span class="req">*</span></label>
       <input name="organization" required placeholder="例) 3年A組" />
 
@@ -23,21 +28,45 @@
       <label>メールアドレス<span class="req">*</span></label>
       <input name="email" type="email" required placeholder="例) example@school.jp" />
 
-      <label>物品<span class="req">*</span></label>
-      <button type="button" class="item-picker-btn" id="itemPickerBtn">
-        <span class="ph">物品を選択してください</span>
-        <span class="arrow">▼</span>
-      </button>
-      <input type="hidden" name="item_id" id="itemIdInput" />
+      <section id="loanFields">
+        <label>物品<span class="req">*</span></label>
+        <button type="button" class="item-picker-btn" id="itemPickerBtn">
+          <span class="ph">物品を選択してください</span>
+          <span class="arrow">▼</span>
+        </button>
+        <input type="hidden" name="item_id" id="itemIdInput" />
 
-      <label>個数<span class="req">*</span></label>
-      <input name="quantity" type="number" min="1" required inputmode="numeric" placeholder="例) 10" />
-      <div class="err" id="qtyErr" hidden></div>
+        <label>個数<span class="req">*</span></label>
+        <input name="quantity" type="number" min="1" inputmode="numeric" placeholder="例) 10" />
+        <div class="err" id="qtyErr" hidden></div>
 
-      <label>用途<span class="req">*</span></label>
-      <textarea name="purpose" rows="3" required placeholder="例) 文化祭の準備で使用します。"></textarea>
+        <label>用途<span class="req">*</span></label>
+        <textarea name="purpose" rows="3" placeholder="例) 文化祭の準備で使用します。"></textarea>
+      </section>
 
-      <button class="btn-primary green" type="submit">この内容で申請する</button>
+      <section id="purchaseFields" hidden>
+        <label>購入した物品の写真</label>
+        <input type="file" id="purchaseImageFile" accept="image/*" hidden />
+        <label for="purchaseImageFile" class="image-drop" id="purchaseImageDrop">
+          <span class="placeholder">
+            <span class="ic">📷</span>
+            <span>タップして画像を選択（任意）</span>
+          </span>
+          <img id="purchaseImagePreview" alt="" hidden />
+          <button type="button" id="purchaseImageClear" class="img-clear" hidden>×</button>
+        </label>
+
+        <label>物品名<span class="req">*</span></label>
+        <input name="purchase_name" placeholder="例) 延長コード" />
+
+        <label>総数<span class="req">*</span></label>
+        <input name="purchase_quantity" type="number" min="1" inputmode="numeric" placeholder="例) 20" />
+
+        <label>備考</label>
+        <textarea name="purchase_note" rows="3" placeholder="例) 文化祭準備用に購入"></textarea>
+      </section>
+
+      <button class="btn-primary green" type="submit" id="submitBtn">この内容で申請する</button>
     </form>
 
     <div class="apply-success" id="done" hidden>
@@ -63,6 +92,7 @@
   </div>
 
   <script src="./js/config.js"></script>
+  <script src="./js/config.local.js"></script>
   <script src="./js/api.js"></script>
   <script src="./js/apply.js"></script>
 </body>

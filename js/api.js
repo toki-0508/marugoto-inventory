@@ -5,17 +5,53 @@ const Mock = (() => {
   const tx = [];
   const requests = [];
 
-  const calc = id => {
+  const calcLending = id => {
     let lent = 0, ret = 0;
     tx.forEach(t => { if (t.item_id === id) (t.type === 'lend' ? lent += t.quantity : ret += t.quantity); });
     return { lent, ret };
   };
 
+  const calcReserved = id => {
+    const activeStatuses = new Set(['pending', 'ready']);
+    const map = {};
+    let reserved = 0;
+    requests.forEach(r => {
+      if (r.request_type !== 'loan') return;
+      if (r.item_id !== id) return;
+      if (!activeStatuses.has(r.status)) return;
+      reserved += r.quantity;
+      const target = `${r.organization}（${r.user_name}）`;
+      map[target] = (map[target] || 0) + r.quantity;
+    });
+    return {
+      reserved,
+      breakdown: Object.entries(map).map(([target, quantity]) => ({ target, quantity })),
+    };
+  };
+
+  const nextItemId = () => items.length ? items[items.length - 1].id + 1 : 1;
+  const nextTxId = () => tx.length ? tx[tx.length - 1].id + 1 : 1;
+  const nextRequestId = () => requests.length ? requests[requests.length - 1].id + 1 : 1;
+
+  const normalizePurchaseDraft = request => ({
+    name: request.approved_item_name || request.purchase_name || request.item_name || '',
+    category: request.approved_category || request.purchase_category || '',
+    total_quantity: Number(request.approved_quantity || request.quantity || 0),
+    note: request.approved_note || request.purchase_note || '',
+    image: request.approved_image || request.purchase_image || '',
+  });
+
   return {
     getItems: () => Promise.resolve({
       items: items.map(it => {
-        const { lent, ret } = calc(it.id);
-        return { ...it, current_quantity: it.total_quantity - lent + ret, lent_quantity: lent - ret };
+        const { lent, ret } = calcLending(it.id);
+        const { reserved } = calcReserved(it.id);
+        return {
+          ...it,
+          current_quantity: it.total_quantity - reserved - lent + ret,
+          reserved_quantity: reserved,
+          lent_quantity: lent - ret,
+        };
       })
     }),
     getItemDetail: id => {
@@ -23,28 +59,31 @@ const Mock = (() => {
       const it = items.find(i => i.id === id);
       if (!it) return Promise.resolve({ error: 'not found' });
       const myTx = tx.filter(t => t.item_id === id);
-      const { lent, ret } = calc(id);
+      const { lent, ret } = calcLending(id);
       const map = {};
       myTx.forEach(t => {
         map[t.target] = (map[t.target] || 0) + (t.type === 'lend' ? t.quantity : -t.quantity);
       });
+      const { reserved, breakdown: reservedBreakdown } = calcReserved(id);
       return Promise.resolve({
         item: {
           ...it,
-          current_quantity: it.total_quantity - lent + ret,
+          current_quantity: it.total_quantity - reserved - lent + ret,
+          reserved_quantity: reserved,
           lent_quantity: lent - ret,
           transactions: [...myTx].reverse(),
-          breakdown: Object.entries(map).filter(([,q]) => q > 0).map(([target, quantity]) => ({ target, quantity }))
+          breakdown: Object.entries(map).filter(([,q]) => q > 0).map(([target, quantity]) => ({ target, quantity })),
+          reserved_breakdown: reservedBreakdown,
         }
       });
     },
     addTransaction: payload => {
-      const newId = tx.length ? tx[tx.length - 1].id + 1 : 1;
+      const newId = nextTxId();
       tx.push({ id: newId, ...payload, timestamp: new Date().toISOString() });
       return Promise.resolve({ success: true, id: newId });
     },
     addItem: payload => {
-      const newId = items.length ? items[items.length - 1].id + 1 : 1;
+      const newId = nextItemId();
       items.push({ id: newId, ...payload, image: payload.image || '' });
       return Promise.resolve({ success: true, id: newId });
     },
@@ -70,21 +109,53 @@ const Mock = (() => {
     }),
     getRequests: () => Promise.resolve({ requests: [...requests].reverse() }),
     addRequest: payload => {
-      const newId = requests.length ? requests[requests.length - 1].id + 1 : 1;
-      const it = items.find(i => i.id === Number(payload.item_id));
+      const newId = nextRequestId();
+      const type = payload.request_type === 'purchase' ? 'purchase' : 'loan';
+      let itemId = '';
+      let itemName = '';
+      let quantity = 0;
+
+      if (type === 'loan') {
+        const it = items.find(i => i.id === Number(payload.item_id));
+        if (!it) return Promise.resolve({ error: 'not found' });
+        const { lent, ret } = calcLending(it.id);
+        const { reserved } = calcReserved(it.id);
+        const available = it.total_quantity - reserved - lent + ret;
+        quantity = Number(payload.quantity);
+        if (!quantity || quantity > available) {
+          return Promise.resolve({ error: `在庫不足です（利用可能 ${available}）` });
+        }
+        itemId = Number(payload.item_id);
+        itemName = it.name;
+      } else {
+        itemName = String(payload.purchase_name || '').trim();
+        quantity = Number(payload.purchase_quantity);
+        if (!itemName || !quantity) return Promise.resolve({ error: 'invalid payload' });
+      }
+
       const r = {
         id: newId,
-        item_id: Number(payload.item_id),
-        item_name: it ? it.name : '?',
-        quantity: Number(payload.quantity),
+        request_type: type,
+        item_id: itemId,
+        item_name: itemName,
+        quantity,
         organization: payload.organization,
         user_name: payload.user_name,
-        purpose: payload.purpose,
+        purpose: type === 'loan' ? payload.purpose : '',
         email: payload.email || '',
         status: 'pending',
         created_at: new Date().toISOString(),
         processed_at: '',
-        memo: ''
+        memo: '',
+        purchase_name: type === 'purchase' ? itemName : '',
+        purchase_image: type === 'purchase' ? (payload.purchase_image || '') : '',
+        purchase_note: type === 'purchase' ? (payload.purchase_note || '') : '',
+        purchase_category: '',
+        approved_item_name: '',
+        approved_category: '',
+        approved_quantity: '',
+        approved_note: '',
+        approved_image: '',
       };
       requests.push(r);
       return Promise.resolve({ success: true, id: newId });
@@ -95,15 +166,25 @@ const Mock = (() => {
       const myTx = tx.filter(t => (t.memo || '').indexOf('申請#' + r.id) === 0);
       return Promise.resolve({ request: { ...r, transactions: [...myTx].reverse() } });
     },
-    updateRequestStatus: ({ id, status, memo }) => {
+    updateRequestStatus: ({ id, status, memo, approved_item }) => {
       const r = requests.find(x => x.id === Number(id));
       if (!r) return Promise.resolve({ error: 'not found' });
+      if (r.request_type === 'purchase' && status === 'approved' && r.status === 'approved') {
+        return Promise.resolve({ error: 'already approved' });
+      }
       r.status = status;
       r.processed_at = new Date().toISOString();
       if (memo != null) r.memo = memo;
+      if (approved_item && r.request_type === 'purchase') {
+        r.approved_item_name = approved_item.name || '';
+        r.approved_category = approved_item.category || '';
+        r.approved_quantity = Number(approved_item.total_quantity) || '';
+        r.approved_note = approved_item.note || '';
+        r.approved_image = approved_item.image || '';
+      }
       // 受け渡し完了時は lend、返却完了時は return を自動記録
       if (status === 'received') {
-        const newId = tx.length ? tx[tx.length - 1].id + 1 : 1;
+        const newId = nextTxId();
         tx.push({
           id: newId, item_id: r.item_id, type: 'lend', quantity: r.quantity,
           target: `${r.organization}（${r.user_name}）`,
@@ -111,16 +192,23 @@ const Mock = (() => {
           memo: `申請#${r.id}`
         });
       } else if (status === 'returned') {
-        const newId = tx.length ? tx[tx.length - 1].id + 1 : 1;
+        const newId = nextTxId();
         tx.push({
           id: newId, item_id: r.item_id, type: 'return', quantity: r.quantity,
           target: `${r.organization}（${r.user_name}）`,
           timestamp: new Date().toISOString(),
           memo: `申請#${r.id} 返却`
         });
+      } else if (status === 'approved' && r.request_type === 'purchase') {
+        const draft = normalizePurchaseDraft(r);
+        if (!draft.name || !draft.category || !draft.total_quantity) {
+          return Promise.resolve({ error: 'invalid approved item' });
+        }
+        const newId = nextItemId();
+        items.push({ id: newId, ...draft });
       }
       return Promise.resolve({ success: true });
-    }
+    },
   };
 })();
 
