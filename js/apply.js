@@ -28,13 +28,38 @@
   let requestType = 'loan';
   let purchaseImageDataUrl = '';
   const uniqueNonEmptyValues = values => [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))];
-  const bindSelectableField = (select, newInput) => {
-    const syncVisibility = () => {
-      newInput.hidden = select.value !== '__new';
+  const appendSelectOption = (select, value) => {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) return false;
+    const hasOption = [...select.options].some(option => option.value === normalizedValue);
+    if (!hasOption) {
+      const option = document.createElement('option');
+      option.value = normalizedValue;
+      option.textContent = normalizedValue;
+      select.appendChild(option);
+    }
+    select.value = normalizedValue;
+    return true;
+  };
+  const bindCreatableSelectField = (select, addInput, addButton) => {
+    if (!select || !addInput || !addButton) return;
+    const addOption = () => {
+      const nextValue = addInput.value.trim();
+      if (!nextValue) {
+        showToast('追加する保管場所を入力してください');
+        addInput.focus();
+        return false;
+      }
+      appendSelectOption(select, nextValue);
+      addInput.value = '';
+      return true;
     };
-    select.addEventListener('change', syncVisibility);
-    syncVisibility();
-    return syncVisibility;
+    addButton.addEventListener('click', addOption);
+    addInput.addEventListener('keydown', event => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      addOption();
+    });
   };
 
   const showToast = msg => {
@@ -145,9 +170,14 @@
   let curItemType = '';
   const stockMap = new Map();
   const purchaseStorageLocationSelect = form.purchase_storage_location;
-  const purchaseStorageLocationNewInput = form.purchaseStorageLocationNew;
+  const purchaseStorageLocationOptionInput = form.purchaseStorageLocationOption;
+  const addPurchaseStorageLocationBtn = document.getElementById('addPurchaseStorageLocationBtn');
 
-  const syncPurchaseStorageLocationField = bindSelectableField(purchaseStorageLocationSelect, purchaseStorageLocationNewInput);
+  bindCreatableSelectField(
+    purchaseStorageLocationSelect,
+    purchaseStorageLocationOptionInput,
+    addPurchaseStorageLocationBtn
+  );
 
   const renderList = () => {
     const q = pickerSearch.value.trim();
@@ -278,20 +308,27 @@
   form.quantity.addEventListener('input', validateQty);
 
   try {
-    const res = await Api.getItems();
-    if (res.error) {
-      showToast('物品取得エラー: ' + res.error);
+    const [itemsRes, storageLocationsRes] = await Promise.all([
+      Api.getItems(),
+      Api.getStorageLocations(),
+    ]);
+    if (itemsRes.error) {
+      showToast('物品取得エラー: ' + itemsRes.error);
     }
-    const items = res.items || [];
+    if (storageLocationsRes.error) {
+      showToast('保管場所取得エラー: ' + storageLocationsRes.error);
+    }
+    const items = itemsRes.items || [];
     allItems = items.filter(i => i.current_quantity > 0);
     allItems.forEach(i => stockMap.set(String(i.id), i.current_quantity));
-    const storageLocations = uniqueNonEmptyValues(items.map(i => i.storage_location));
+    const storageLocations = uniqueNonEmptyValues([
+      ...(storageLocationsRes.storage_locations || []),
+      ...items.map(i => i.storage_location),
+    ]);
     purchaseStorageLocationSelect.innerHTML = `
       <option value="">選択してください</option>
       ${storageLocations.map(location => `<option>${escape(location)}</option>`).join('')}
-      <option value="__new">＋ 新しい保管場所</option>
     `;
-    syncPurchaseStorageLocationField();
     buildCats();
   } catch (error) {
     showToast('物品の取得に失敗: ' + (error.message || error));
@@ -321,9 +358,7 @@
           purchase_name: form.purchase_name.value.trim(),
           purchase_item_type: form.purchase_item_type.value,
           purchase_quantity: Number(form.purchase_quantity.value),
-          purchase_storage_location: form.purchase_storage_location.value === '__new'
-            ? form.purchaseStorageLocationNew.value.trim()
-            : form.purchase_storage_location.value,
+          purchase_storage_location: form.purchase_storage_location.value.trim(),
           purchase_note: form.purchase_note.value.trim(),
           purchase_image: purchaseImageDataUrl,
         }
@@ -374,7 +409,6 @@
     setPurchasePreview('');
     qtyErr.hidden = true;
     form.quantity.classList.remove('invalid');
-    syncPurchaseStorageLocationField();
     updateMode('loan');
     form.hidden = false;
     done.hidden = true;

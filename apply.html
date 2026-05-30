@@ -71,9 +71,11 @@
         <label>保管場所</label>
         <select name="purchase_storage_location">
           <option value="">選択してください</option>
-          <option value="__new">＋ 新しい保管場所</option>
         </select>
-        <input name="purchaseStorageLocationNew" placeholder="新しい保管場所" hidden style="margin-top:6px" />
+        <div class="select-add-row">
+          <input name="purchaseStorageLocationOption" placeholder="新しい保管場所を追加" />
+          <button type="button" class="btn-inline-add" id="addPurchaseStorageLocationBtn">追加</button>
+        </div>
 
         <label>備考</label>
         <textarea name="purchase_note" rows="3" placeholder="例) 文化祭準備用に購入"></textarea>

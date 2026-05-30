@@ -6,7 +6,7 @@ const back  = document.getElementById('backBtn');
 const tabs  = document.querySelectorAll('.tabbar .tab');
 const toast = document.getElementById('toast');
 
-const State = { items: [] };
+const State = { items: [], storageLocations: [] };
 
 const escape = s => String(s ?? '').replace(/[&<>"']/g, c => ({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
@@ -57,6 +57,20 @@ const buildSelectableOptions = (values, currentValue = '') => {
   }
   return options;
 };
+const storageLocationOptions = currentValue => buildSelectableOptions(State.storageLocations, currentValue);
+const appendSelectOption = (select, value) => {
+  const normalizedValue = String(value || '').trim();
+  if (!normalizedValue) return false;
+  const hasOption = [...select.options].some(option => option.value === normalizedValue);
+  if (!hasOption) {
+    const option = document.createElement('option');
+    option.value = normalizedValue;
+    option.textContent = normalizedValue;
+    select.appendChild(option);
+  }
+  select.value = normalizedValue;
+  return true;
+};
 const bindSelectableField = (form, selectName, newInputName) => {
   const select = form.elements[selectName];
   const newInput = form.elements[newInputName];
@@ -66,6 +80,35 @@ const bindSelectableField = (form, selectName, newInputName) => {
   };
   select.addEventListener('change', syncVisibility);
   syncVisibility();
+};
+const bindCreatableSelectField = (form, selectName, addInputName, addButtonName, emptyMessage) => {
+  const select = form.elements[selectName];
+  const addInput = form.elements[addInputName];
+  const addButton = form.elements[addButtonName];
+  if (!select || !addInput || !addButton) return;
+  const addOption = () => {
+    const nextValue = addInput.value.trim();
+    if (!nextValue) {
+      showToast(emptyMessage || '追加する値を入力してください');
+      addInput.focus();
+      return false;
+    }
+    appendSelectOption(select, nextValue);
+    addInput.value = '';
+    return true;
+  };
+  addButton.addEventListener('click', addOption);
+  addInput.addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    addOption();
+  });
+};
+const ensureStorageLocations = async () => {
+  if (State.storageLocations.length) return State.storageLocations;
+  const { storage_locations = [] } = await Api.getStorageLocations();
+  State.storageLocations = uniqueNonEmptyValues(storage_locations);
+  return State.storageLocations;
 };
 
 // コメント入力モーダル（Promise を返す）
@@ -650,6 +693,7 @@ routes.approvePurchase = async ({ id }) => {
     const { items = [] } = await Api.getItems();
     State.items = items;
   }
+  await ensureStorageLocations();
   const { request: requestData, error } = await Api.getRequestDetail(id);
   if (error || !requestData || !isPurchaseRequest(requestData)) {
     view.innerHTML = `<div class="empty">購入申請の読み込みに失敗しました</div>`;
@@ -666,7 +710,7 @@ routes.approvePurchase = async ({ id }) => {
     image: requestData.approved_image || requestData.purchase_image || '',
   };
   const cats = buildSelectableOptions(State.items.map(i => i.category), approvedDraft.category);
-  const storageLocations = buildSelectableOptions(State.items.map(i => i.storage_location), approvedDraft.storage_location);
+  const storageLocations = storageLocationOptions(approvedDraft.storage_location);
 
   view.innerHTML = `
     <form class="form-page" id="approvePurchaseForm">
@@ -711,9 +755,11 @@ routes.approvePurchase = async ({ id }) => {
       <select name="storage_location">
         <option value="">選択してください</option>
         ${storageLocations.map(location => `<option ${location === approvedDraft.storage_location ? 'selected' : ''}>${escape(location)}</option>`).join('')}
-        <option value="__new">＋ 新しい保管場所</option>
       </select>
-      <input name="storageLocationNew" value="${escape(approvedDraft.storage_location && !storageLocations.includes(approvedDraft.storage_location) ? approvedDraft.storage_location : '')}" placeholder="新しい保管場所" hidden style="margin-top:6px" />
+      <div class="select-add-row">
+        <input name="storageLocationOption" placeholder="新しい保管場所を追加" />
+        <button type="button" class="btn-inline-add" name="addStorageLocation">追加</button>
+      </div>
 
       <label>備考</label>
       <textarea name="note" rows="3">${escape(approvedDraft.note || '')}</textarea>
@@ -727,7 +773,7 @@ routes.approvePurchase = async ({ id }) => {
 
   const form = view.querySelector('#approvePurchaseForm');
   bindSelectableField(form, 'category', 'categoryNew');
-  bindSelectableField(form, 'storage_location', 'storageLocationNew');
+  bindCreatableSelectField(form, 'storage_location', 'storageLocationOption', 'addStorageLocation', '追加する保管場所を入力してください');
 
   const fileInput = view.querySelector('#imgFile');
   const preview = view.querySelector('#imgPreview');
@@ -774,9 +820,7 @@ routes.approvePurchase = async ({ id }) => {
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const category = form.category.value === '__new' ? form.categoryNew.value.trim() : form.category.value;
-    const storageLocation = form.storage_location.value === '__new'
-      ? form.storageLocationNew.value.trim()
-      : form.storage_location.value;
+    const storageLocation = form.storage_location.value.trim();
     const approvedItem = {
       name: form.name.value.trim(),
       category,
@@ -807,6 +851,7 @@ routes.approvePurchase = async ({ id }) => {
     }
     showToast('物品一覧へ登録しました');
     State.items = [];
+    State.storageLocations = [];
     go('reqDetail', { id: requestData.id });
   });
 };
@@ -823,8 +868,9 @@ routes.add = async () => {
     const { items = [] } = await Api.getItems();
     State.items = items;
   }
+  await ensureStorageLocations();
   const cats = buildSelectableOptions(State.items.map(i => i.category));
-  const storageLocations = buildSelectableOptions(State.items.map(i => i.storage_location));
+  const storageLocations = storageLocationOptions();
 
   view.innerHTML = `
     <form class="form-page" id="addForm">
@@ -863,9 +909,11 @@ routes.add = async () => {
       <select name="storage_location">
         <option value="">選択してください</option>
         ${storageLocations.map(location => `<option>${escape(location)}</option>`).join('')}
-        <option value="__new">＋ 新しい保管場所</option>
       </select>
-      <input name="storageLocationNew" placeholder="新しい保管場所" hidden style="margin-top:6px" />
+      <div class="select-add-row">
+        <input name="storageLocationOption" placeholder="新しい保管場所を追加" />
+        <button type="button" class="btn-inline-add" name="addStorageLocation">追加</button>
+      </div>
 
       <label>備考</label>
       <textarea name="note" rows="2" placeholder="例) 倉庫Aに保管"></textarea>
@@ -876,7 +924,7 @@ routes.add = async () => {
 
   const f = view.querySelector('#addForm');
   bindSelectableField(f, 'category', 'categoryNew');
-  bindSelectableField(f, 'storage_location', 'storageLocationNew');
+  bindCreatableSelectField(f, 'storage_location', 'storageLocationOption', 'addStorageLocation', '追加する保管場所を入力してください');
 
   // 画像ピッカー
   const fileInput = view.querySelector('#imgFile');
@@ -920,9 +968,7 @@ routes.add = async () => {
   f.addEventListener('submit', async e => {
     e.preventDefault();
     const cat = f.category.value === '__new' ? f.categoryNew.value.trim() : f.category.value;
-    const storageLocation = f.storage_location.value === '__new'
-      ? f.storageLocationNew.value.trim()
-      : f.storage_location.value;
+    const storageLocation = f.storage_location.value.trim();
     const payload = {
       name: f.name.value.trim(),
       category: cat,
@@ -940,6 +986,7 @@ routes.add = async () => {
     if (r.error) { showToast('エラー: ' + r.error); return; }
     showToast('物品を追加しました');
     State.items = [];
+    State.storageLocations = [];
     go('home');
   });
 };
@@ -956,12 +1003,13 @@ routes.editItem = async ({ id }) => {
     const { items = [] } = await Api.getItems();
     State.items = items;
   }
+  await ensureStorageLocations();
 
   const { item, error } = await Api.getItemDetail(id);
   if (error || !item) { view.innerHTML = `<div class="empty">読み込みに失敗</div>`; return; }
 
   const cats = buildSelectableOptions(State.items.map(i => i.category), item.category);
-  const storageLocations = buildSelectableOptions(State.items.map(i => i.storage_location), item.storage_location);
+  const storageLocations = storageLocationOptions(item.storage_location);
 
   view.innerHTML = `
     <form class="form-page" id="editForm">
@@ -1000,9 +1048,11 @@ routes.editItem = async ({ id }) => {
       <select name="storage_location">
         <option value="">選択してください</option>
         ${storageLocations.map(location => `<option ${location === item.storage_location ? 'selected' : ''}>${escape(location)}</option>`).join('')}
-        <option value="__new">＋ 新しい保管場所</option>
       </select>
-      <input name="storageLocationNew" value="${escape(item.storage_location && !storageLocations.includes(item.storage_location) ? item.storage_location : '')}" placeholder="新しい保管場所" hidden style="margin-top:6px" />
+      <div class="select-add-row">
+        <input name="storageLocationOption" placeholder="新しい保管場所を追加" />
+        <button type="button" class="btn-inline-add" name="addStorageLocation">追加</button>
+      </div>
 
       <label>備考</label>
       <textarea name="note" rows="2">${escape(item.note || '')}</textarea>
@@ -1013,7 +1063,7 @@ routes.editItem = async ({ id }) => {
 
   const f = view.querySelector('#editForm');
   bindSelectableField(f, 'category', 'categoryNew');
-  bindSelectableField(f, 'storage_location', 'storageLocationNew');
+  bindCreatableSelectField(f, 'storage_location', 'storageLocationOption', 'addStorageLocation', '追加する保管場所を入力してください');
 
   // 画像ピッカー（既存画像をプリセット）
   const fileInput = view.querySelector('#imgFile');
@@ -1058,9 +1108,7 @@ routes.editItem = async ({ id }) => {
   f.addEventListener('submit', async e => {
     e.preventDefault();
     const cat = f.category.value === '__new' ? f.categoryNew.value.trim() : f.category.value;
-    const storageLocation = f.storage_location.value === '__new'
-      ? f.storageLocationNew.value.trim()
-      : f.storage_location.value;
+    const storageLocation = f.storage_location.value.trim();
     const payload = {
       id: item.id,
       name: f.name.value.trim(),
@@ -1079,6 +1127,7 @@ routes.editItem = async ({ id }) => {
     if (r.error) { showToast('エラー: ' + r.error); return; }
     showToast('更新しました');
     State.items = [];
+    State.storageLocations = [];
     go('detail', { id: item.id });
   });
 };

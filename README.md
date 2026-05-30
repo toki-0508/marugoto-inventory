@@ -8,6 +8,7 @@
 - 利用者用画面：物品利用申請フォーム / 物品購入申請フォーム
 - 貸出申請は 申請 → 承認 → 受け渡し → 返却 をステータスで管理
 - 購入申請は管理者が内容を編集して承認すると物品一覧へ登録
+- 保管場所は候補として保存され、以後は選択肢から再利用できる
 - 申請中 / 承認済みの貸出依頼は「予約済み」として在庫に反映
 - 物品ごとに `物品` / `消耗品` を設定できる
 - 商品画像のアップロード対応
@@ -31,7 +32,7 @@ gas/Code.gs             Apps Script バックエンド
 
 ### 1. スプレッドシートを作成
 
-新規のスプレッドシートに 3 つのシートをヘッダ付きで作る。
+新規のスプレッドシートに 4 つのシートをヘッダ付きで作る。
 
 **items**
 | A: id | B: name | C: category | D: item_type | E: total_quantity | F: storage_location | G: note | H: image |
@@ -45,12 +46,15 @@ gas/Code.gs             Apps Script バックエンド
 **requests**
 | A: id | B: item_id | C: item_name | D: quantity | E: organization | F: user_name | G: purpose | H: status | I: created_at | J: processed_at | K: memo | L: email | M: request_type | N: purchase_name | O: purchase_image | P: purchase_note | Q: purchase_item_type | R: purchase_storage_location | S: approved_item_name | T: approved_category | U: approved_item_type | V: approved_quantity | W: approved_storage_location | X: approved_note | Y: approved_image |
 
+**storage_locations**
+| A: id | B: name | C: created_at |
+
 ### 2. Apps Script を設定
 
 1. スプレッドシートのメニューから「拡張機能 → Apps Script」
 2. `gas/Code.gs` の中身を貼り付け
 3. 先頭の `SHEET_ID` をスプレッドシート ID（URL の `/d/` と `/edit` の間）に書き換え
-4. Apps Script エディタで `setupSheets()` を 1 回実行して、`requests` シートの追加列を揃える
+4. Apps Script エディタで `setupSheets()` を 1 回実行して、`requests` シートの追加列と `storage_locations` シートを揃える
 5. 「デプロイ → 新しいデプロイ → ウェブアプリ」
    - アクセスできるユーザー：全員
    - 実行するユーザー：自分

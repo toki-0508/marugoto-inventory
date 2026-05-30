@@ -2,7 +2,7 @@
  * まるごと祭 物品管理ツール  -  Google Apps Script バックエンド
  *
  * 【セットアップ手順】
- * 1) スプレッドシートを新規作成し、シートを 3 つ用意する
+ * 1) スプレッドシートを新規作成し、シートを 4 つ用意する
  *    シート名: items
  *      A1: id  B1: name  C1: category  D1: item_type  E1: total_quantity  F1: storage_location  G1: note  H1: image
  *    シート名: transactions
@@ -14,6 +14,8 @@
  *      P1: purchase_note  Q1: purchase_item_type  R1: purchase_storage_location  S1: approved_item_name
  *      T1: approved_category  U1: approved_item_type  V1: approved_quantity  W1: approved_storage_location
  *      X1: approved_note  Y1: approved_image
+ *    シート名: storage_locations
+ *      A1: id  B1: name  C1: created_at
  *
  * 2) Apps Script エディタを開いて、このファイルの中身を貼り付ける
  *
@@ -30,6 +32,7 @@ const SHEET_ID = '';                 // ← デプロイ時に各自のスプレ
 const ITEMS_SHEET = 'items';
 const TX_SHEET = 'transactions';
 const REQ_SHEET = 'requests';
+const STORAGE_LOCATIONS_SHEET = 'storage_locations';
 const ACTIVE_RESERVATION_STATUSES = { pending: true, ready: true };
 const ITEM_TYPE_LABELS = { equipment: '物品', consumable: '消耗品' };
 
@@ -48,6 +51,7 @@ function doGet(e) {
       case 'getItems':      return getItems();
       case 'getItemDetail': return getItemDetail(Number(e.parameter.id));
       case 'getLogs':       return getLogs();
+      case 'getStorageLocations': return getStorageLocations();
       case 'getRequests':       return getRequests();
       case 'getRequestDetail':  return getRequestDetail(Number(e.parameter.id));
       default:              return { error: 'unknown action: ' + action };
@@ -64,6 +68,7 @@ function doPost(e) {
       case 'updateItem':           return updateItem(body.payload);
       case 'deleteItem':           return deleteItem(body.payload);
       case 'addRequest':           return addRequest(body.payload);
+      case 'addStorageLocation':   return addStorageLocation(body.payload);
       case 'updateRequestStatus':  return updateRequestStatus(body.payload);
       default:                     return { error: 'unknown action: ' + body.action };
     }
@@ -230,6 +235,67 @@ function _requestHeaders() {
   ];
 }
 
+function _normalizeStorageLocationName(value) {
+  return String(value || '').trim();
+}
+
+function _storageLocationColumns(sheet) {
+  const headers = _headerMap(sheet);
+  return {
+    id: headers.id || 1,
+    name: headers.name || 2,
+    created_at: headers.created_at || 3
+  };
+}
+
+function _collectStorageLocationsFromItems() {
+  const sheet = _sheet(ITEMS_SHEET);
+  const cols = _itemColumns(sheet);
+  const values = sheet.getDataRange().getValues();
+  const locations = [];
+  for (let i = 1; i < values.length; i++) {
+    const name = _normalizeStorageLocationName(_cell(values[i], cols.storage_location, ''));
+    if (name) locations.push(name);
+  }
+  return locations;
+}
+
+function _getStorageLocationNames() {
+  const sheet = _sheet(STORAGE_LOCATIONS_SHEET);
+  const cols = _storageLocationColumns(sheet);
+  const values = sheet.getDataRange().getValues();
+  const locations = [];
+  for (let i = 1; i < values.length; i++) {
+    const name = _normalizeStorageLocationName(_cell(values[i], cols.name, ''));
+    if (name) locations.push(name);
+  }
+  return locations;
+}
+
+function _upsertStorageLocation(name) {
+  const normalized = _normalizeStorageLocationName(name);
+  if (!normalized) return '';
+
+  const sheet = _sheet(STORAGE_LOCATIONS_SHEET);
+  const cols = _storageLocationColumns(sheet);
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    const existing = _normalizeStorageLocationName(_cell(values[i], cols.name, ''));
+    if (existing === normalized) return normalized;
+  }
+
+  const newId = _nextId(sheet);
+  sheet.appendRow([newId, normalized, new Date()]);
+  return normalized;
+}
+
+function _syncStorageLocationsFromItems() {
+  const itemLocations = _collectStorageLocationsFromItems();
+  for (let i = 0; i < itemLocations.length; i++) {
+    _upsertStorageLocation(itemLocations[i]);
+  }
+}
+
 function _normalizeRequestRow(row) {
   return {
     id: row[0],
@@ -342,7 +408,14 @@ function setupSheets() {
   _ensureStorageLocationColumn(_sheet(ITEMS_SHEET));
   ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo']);
   ensure(REQ_SHEET, _requestHeaders());
+  ensure(STORAGE_LOCATIONS_SHEET, ['id', 'name', 'created_at']);
+  _syncStorageLocationsFromItems();
   return 'Done';
+}
+
+function getStorageLocations() {
+  _syncStorageLocationsFromItems();
+  return { storage_locations: _getStorageLocationNames() };
 }
 
 function getItems() {
@@ -442,13 +515,14 @@ function addItem(p) {
   const cols = _itemColumns(sheet);
   const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
   const storageCol = cols.storage_location || _ensureStorageLocationColumn(sheet);
+  const storageLocation = _upsertStorageLocation(p.storage_location || '');
   const newId = _nextId(sheet);
   const row = [];
   row[cols.id - 1] = newId;
   row[cols.name - 1] = p.name;
   row[cols.category - 1] = p.category || '';
   row[cols.total_quantity - 1] = Number(p.total_quantity) || 0;
-  row[storageCol - 1] = p.storage_location || '';
+  row[storageCol - 1] = storageLocation;
   row[cols.note - 1] = p.note || '';
   row[cols.image - 1] = p.image || '';
   row[itemTypeCol - 1] = ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment;
@@ -470,7 +544,7 @@ function updateItem(p) {
       if (p.category       !== undefined) sheet.getRange(row, cols.category).setValue(p.category);
       if (p.item_type      !== undefined) sheet.getRange(row, itemTypeCol).setValue(ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment);
       if (p.total_quantity !== undefined) sheet.getRange(row, cols.total_quantity).setValue(Number(p.total_quantity) || 0);
-      if (p.storage_location !== undefined) sheet.getRange(row, storageCol).setValue(p.storage_location);
+      if (p.storage_location !== undefined) sheet.getRange(row, storageCol).setValue(_upsertStorageLocation(p.storage_location));
       if (p.note           !== undefined) sheet.getRange(row, cols.note).setValue(p.note);
       if (p.image          !== undefined) sheet.getRange(row, cols.image).setValue(p.image);
       return { success: true };
@@ -564,7 +638,7 @@ function addRequest(p) {
     purchase_image = p.purchase_image || '';
     purchase_note = p.purchase_note || '';
     purchase_item_type = _normalizeItemType(p.purchase_item_type);
-    purchase_storage_location = p.purchase_storage_location || '';
+    purchase_storage_location = _upsertStorageLocation(p.purchase_storage_location || '');
     if (!purchase_name || !quantity) return { error: 'invalid payload' };
     item_name = purchase_name;
   }
@@ -579,6 +653,13 @@ function addRequest(p) {
     '', '', '', '', '', '', ''
   ]);
   return { success: true, id: newId };
+}
+
+function addStorageLocation(p) {
+  if (!p) return { error: 'invalid payload' };
+  const name = _upsertStorageLocation(p.name);
+  if (!name) return { error: 'storage location name is required' };
+  return { success: true, name: name };
 }
 
 function getRequestDetail(id) {
@@ -644,6 +725,7 @@ function updateRequestStatus(p) {
     if (!draft.name || !draft.category || !draft.item_type || !draft.total_quantity) {
       return { error: 'approved item is invalid' };
     }
+    draft.storage_location = _upsertStorageLocation(draft.storage_location);
     const itemSheet = _sheet(ITEMS_SHEET);
     const itemCols = _itemColumns(itemSheet);
     const itemTypeCol = itemCols.item_type || _ensureItemTypeColumn(itemSheet);

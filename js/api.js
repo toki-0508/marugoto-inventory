@@ -4,6 +4,7 @@ const Mock = (() => {
   const items = [];
   const tx = [];
   const requests = [];
+  const storageLocations = [];
 
   const normalizeItemType = value => {
     const raw = String(value || '').trim();
@@ -44,7 +45,21 @@ const Mock = (() => {
   const nextItemId = () => items.length ? items[items.length - 1].id + 1 : 1;
   const nextTxId = () => tx.length ? tx[tx.length - 1].id + 1 : 1;
   const nextRequestId = () => requests.length ? requests[requests.length - 1].id + 1 : 1;
+  const nextStorageLocationId = () => storageLocations.length ? storageLocations[storageLocations.length - 1].id + 1 : 1;
   const isConsumable = item => item && normalizeItemType(item.item_type) === 'consumable';
+  const normalizeStorageLocationName = value => String(value || '').trim();
+  const upsertStorageLocation = value => {
+    const name = normalizeStorageLocationName(value);
+    if (!name) return '';
+    if (storageLocations.some(location => location.name === name)) return name;
+    storageLocations.push({ id: nextStorageLocationId(), name, created_at: new Date().toISOString() });
+    return name;
+  };
+  const syncStorageLocationsFromItems = () => {
+    items.forEach(item => {
+      upsertStorageLocation(item.storage_location);
+    });
+  };
 
   const normalizePurchaseDraft = request => ({
     name: request.approved_item_name || request.purchase_name || request.item_name || '',
@@ -99,16 +114,46 @@ const Mock = (() => {
     },
     addItem: payload => {
       const newId = nextItemId();
-      items.push({ id: newId, ...payload, storage_location: payload.storage_location || '', item_type: normalizeItemType(payload.item_type), image: payload.image || '' });
+      items.push({
+        id: newId,
+        ...payload,
+        storage_location: upsertStorageLocation(payload.storage_location),
+        item_type: normalizeItemType(payload.item_type),
+        image: payload.image || ''
+      });
       return Promise.resolve({ success: true, id: newId });
     },
     updateItem: payload => {
       const it = items.find(x => x.id === Number(payload.id));
       if (!it) return Promise.resolve({ error: 'not found' });
       ['name', 'category', 'item_type', 'total_quantity', 'storage_location', 'note', 'image'].forEach(k => {
-        if (payload[k] !== undefined) it[k] = (k === 'total_quantity') ? Number(payload[k]) : (k === 'item_type' ? normalizeItemType(payload[k]) : payload[k]);
+        if (payload[k] === undefined) return;
+        if (k === 'total_quantity') {
+          it[k] = Number(payload[k]);
+          return;
+        }
+        if (k === 'item_type') {
+          it[k] = normalizeItemType(payload[k]);
+          return;
+        }
+        if (k === 'storage_location') {
+          it[k] = upsertStorageLocation(payload[k]);
+          return;
+        }
+        it[k] = payload[k];
       });
       return Promise.resolve({ success: true });
+    },
+    getStorageLocations: () => {
+      syncStorageLocationsFromItems();
+      return Promise.resolve({
+        storage_locations: storageLocations.map(location => location.name)
+      });
+    },
+    addStorageLocation: payload => {
+      const name = upsertStorageLocation(payload && payload.name);
+      if (!name) return Promise.resolve({ error: 'storage location name is required' });
+      return Promise.resolve({ success: true, name });
     },
     deleteItem: payload => {
       const idx = items.findIndex(x => x.id === Number(payload.id));
@@ -169,7 +214,7 @@ const Mock = (() => {
         purchase_image: type === 'purchase' ? (payload.purchase_image || '') : '',
         purchase_note: type === 'purchase' ? (payload.purchase_note || '') : '',
         purchase_item_type: type === 'purchase' ? normalizeItemType(payload.purchase_item_type) : '',
-        purchase_storage_location: type === 'purchase' ? (payload.purchase_storage_location || '') : '',
+        purchase_storage_location: type === 'purchase' ? upsertStorageLocation(payload.purchase_storage_location) : '',
         purchase_category: '',
         approved_item_name: '',
         approved_category: '',
@@ -239,6 +284,7 @@ const Mock = (() => {
         if (!draft.name || !draft.category || !draft.item_type || !draft.total_quantity) {
           return Promise.resolve({ error: 'invalid approved item' });
         }
+        draft.storage_location = upsertStorageLocation(draft.storage_location);
         const newId = nextItemId();
         items.push({ id: newId, ...draft });
       }
@@ -271,6 +317,7 @@ const Api = {
   getItems()        { return this._useMock() ? Mock.getItems()        : this._get('getItems'); },
   getItemDetail(id) { return this._useMock() ? Mock.getItemDetail(id) : this._get('getItemDetail', { id }); },
   getLogs()         { return this._useMock() ? Mock.getLogs()         : this._get('getLogs'); },
+  getStorageLocations() { return this._useMock() ? Mock.getStorageLocations() : this._get('getStorageLocations'); },
   addTransaction(p) { return this._useMock() ? Mock.addTransaction(p) : this._post('addTransaction', p); },
   addItem(p)        { return this._useMock() ? Mock.addItem(p)        : this._post('addItem', p); },
   updateItem(p)     { return this._useMock() ? Mock.updateItem(p)     : this._post('updateItem', p); },
@@ -278,5 +325,6 @@ const Api = {
   getRequests()       { return this._useMock() ? Mock.getRequests()        : this._get('getRequests'); },
   getRequestDetail(id){ return this._useMock() ? Mock.getRequestDetail(id) : this._get('getRequestDetail', { id }); },
   addRequest(p)       { return this._useMock() ? Mock.addRequest(p)        : this._post('addRequest', p); },
+  addStorageLocation(p) { return this._useMock() ? Mock.addStorageLocation(p) : this._post('addStorageLocation', p); },
   updateRequestStatus(p) { return this._useMock() ? Mock.updateRequestStatus(p) : this._post('updateRequestStatus', p); },
 };
