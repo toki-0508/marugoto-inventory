@@ -48,6 +48,25 @@ const getRequestItemType = request => {
   return request.item_type || 'equipment';
 };
 const getRequestItemTypeLabel = request => getRequestItemType(request) === 'consumable' ? '消耗品' : '物品';
+const uniqueNonEmptyValues = values => [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))];
+const buildSelectableOptions = (values, currentValue = '') => {
+  const options = uniqueNonEmptyValues(values);
+  const normalizedCurrentValue = String(currentValue || '').trim();
+  if (normalizedCurrentValue && !options.includes(normalizedCurrentValue)) {
+    options.unshift(normalizedCurrentValue);
+  }
+  return options;
+};
+const bindSelectableField = (form, selectName, newInputName) => {
+  const select = form.elements[selectName];
+  const newInput = form.elements[newInputName];
+  if (!select || !newInput) return;
+  const syncVisibility = () => {
+    newInput.hidden = select.value !== '__new';
+  };
+  select.addEventListener('change', syncVisibility);
+  syncVisibility();
+};
 
 // コメント入力モーダル（Promise を返す）
 function askComment(opts) {
@@ -631,7 +650,6 @@ routes.approvePurchase = async ({ id }) => {
     const { items = [] } = await Api.getItems();
     State.items = items;
   }
-  const cats = [...new Set(State.items.map(i => i.category).filter(Boolean))];
   const { request: requestData, error } = await Api.getRequestDetail(id);
   if (error || !requestData || !isPurchaseRequest(requestData)) {
     view.innerHTML = `<div class="empty">購入申請の読み込みに失敗しました</div>`;
@@ -647,6 +665,8 @@ routes.approvePurchase = async ({ id }) => {
     note: requestData.approved_note || requestData.purchase_note || '',
     image: requestData.approved_image || requestData.purchase_image || '',
   };
+  const cats = buildSelectableOptions(State.items.map(i => i.category), approvedDraft.category);
+  const storageLocations = buildSelectableOptions(State.items.map(i => i.storage_location), approvedDraft.storage_location);
 
   view.innerHTML = `
     <form class="form-page" id="approvePurchaseForm">
@@ -688,7 +708,12 @@ routes.approvePurchase = async ({ id }) => {
       <input name="total_quantity" type="number" min="1" required value="${approvedDraft.total_quantity}" />
 
       <label>保管場所</label>
-      <input name="storage_location" value="${escape(approvedDraft.storage_location || '')}" placeholder="例) 倉庫A" />
+      <select name="storage_location">
+        <option value="">選択してください</option>
+        ${storageLocations.map(location => `<option ${location === approvedDraft.storage_location ? 'selected' : ''}>${escape(location)}</option>`).join('')}
+        <option value="__new">＋ 新しい保管場所</option>
+      </select>
+      <input name="storageLocationNew" value="${escape(approvedDraft.storage_location && !storageLocations.includes(approvedDraft.storage_location) ? approvedDraft.storage_location : '')}" placeholder="新しい保管場所" hidden style="margin-top:6px" />
 
       <label>備考</label>
       <textarea name="note" rows="3">${escape(approvedDraft.note || '')}</textarea>
@@ -701,9 +726,8 @@ routes.approvePurchase = async ({ id }) => {
   `;
 
   const form = view.querySelector('#approvePurchaseForm');
-  form.category.addEventListener('change', () => {
-    form.categoryNew.hidden = form.category.value !== '__new';
-  });
+  bindSelectableField(form, 'category', 'categoryNew');
+  bindSelectableField(form, 'storage_location', 'storageLocationNew');
 
   const fileInput = view.querySelector('#imgFile');
   const preview = view.querySelector('#imgPreview');
@@ -750,12 +774,15 @@ routes.approvePurchase = async ({ id }) => {
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const category = form.category.value === '__new' ? form.categoryNew.value.trim() : form.category.value;
+    const storageLocation = form.storage_location.value === '__new'
+      ? form.storageLocationNew.value.trim()
+      : form.storage_location.value;
     const approvedItem = {
       name: form.name.value.trim(),
       category,
       item_type: form.item_type.value,
       total_quantity: Number(form.total_quantity.value),
-      storage_location: form.storage_location.value.trim(),
+      storage_location: storageLocation,
       note: form.note.value.trim(),
       image: imageDataUrl,
     };
@@ -796,7 +823,8 @@ routes.add = async () => {
     const { items = [] } = await Api.getItems();
     State.items = items;
   }
-  const cats = [...new Set(State.items.map(i => i.category).filter(Boolean))];
+  const cats = buildSelectableOptions(State.items.map(i => i.category));
+  const storageLocations = buildSelectableOptions(State.items.map(i => i.storage_location));
 
   view.innerHTML = `
     <form class="form-page" id="addForm">
@@ -832,7 +860,12 @@ routes.add = async () => {
       <input name="total_quantity" type="number" min="0" required inputmode="numeric" placeholder="例) 100" />
 
       <label>保管場所</label>
-      <input name="storage_location" placeholder="例) 倉庫A" />
+      <select name="storage_location">
+        <option value="">選択してください</option>
+        ${storageLocations.map(location => `<option>${escape(location)}</option>`).join('')}
+        <option value="__new">＋ 新しい保管場所</option>
+      </select>
+      <input name="storageLocationNew" placeholder="新しい保管場所" hidden style="margin-top:6px" />
 
       <label>備考</label>
       <textarea name="note" rows="2" placeholder="例) 倉庫Aに保管"></textarea>
@@ -842,9 +875,8 @@ routes.add = async () => {
   `;
 
   const f = view.querySelector('#addForm');
-  f.category.addEventListener('change', () => {
-    f.categoryNew.hidden = f.category.value !== '__new';
-  });
+  bindSelectableField(f, 'category', 'categoryNew');
+  bindSelectableField(f, 'storage_location', 'storageLocationNew');
 
   // 画像ピッカー
   const fileInput = view.querySelector('#imgFile');
@@ -888,12 +920,15 @@ routes.add = async () => {
   f.addEventListener('submit', async e => {
     e.preventDefault();
     const cat = f.category.value === '__new' ? f.categoryNew.value.trim() : f.category.value;
+    const storageLocation = f.storage_location.value === '__new'
+      ? f.storageLocationNew.value.trim()
+      : f.storage_location.value;
     const payload = {
       name: f.name.value.trim(),
       category: cat,
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
-      storage_location: f.storage_location.value.trim(),
+      storage_location: storageLocation,
       note: f.note.value.trim(),
       image: imageDataUrl,
     };
@@ -921,13 +956,12 @@ routes.editItem = async ({ id }) => {
     const { items = [] } = await Api.getItems();
     State.items = items;
   }
-  const cats = [...new Set(State.items.map(i => i.category).filter(Boolean))];
 
   const { item, error } = await Api.getItemDetail(id);
   if (error || !item) { view.innerHTML = `<div class="empty">読み込みに失敗</div>`; return; }
 
-  // カテゴリが既存リストに無い場合も自動で追加表示
-  if (item.category && !cats.includes(item.category)) cats.unshift(item.category);
+  const cats = buildSelectableOptions(State.items.map(i => i.category), item.category);
+  const storageLocations = buildSelectableOptions(State.items.map(i => i.storage_location), item.storage_location);
 
   view.innerHTML = `
     <form class="form-page" id="editForm">
@@ -963,7 +997,12 @@ routes.editItem = async ({ id }) => {
       <input name="total_quantity" type="number" min="0" required value="${item.total_quantity}" />
 
       <label>保管場所</label>
-      <input name="storage_location" value="${escape(item.storage_location || '')}" />
+      <select name="storage_location">
+        <option value="">選択してください</option>
+        ${storageLocations.map(location => `<option ${location === item.storage_location ? 'selected' : ''}>${escape(location)}</option>`).join('')}
+        <option value="__new">＋ 新しい保管場所</option>
+      </select>
+      <input name="storageLocationNew" value="${escape(item.storage_location && !storageLocations.includes(item.storage_location) ? item.storage_location : '')}" placeholder="新しい保管場所" hidden style="margin-top:6px" />
 
       <label>備考</label>
       <textarea name="note" rows="2">${escape(item.note || '')}</textarea>
@@ -973,9 +1012,8 @@ routes.editItem = async ({ id }) => {
   `;
 
   const f = view.querySelector('#editForm');
-  f.category.addEventListener('change', () => {
-    f.categoryNew.hidden = f.category.value !== '__new';
-  });
+  bindSelectableField(f, 'category', 'categoryNew');
+  bindSelectableField(f, 'storage_location', 'storageLocationNew');
 
   // 画像ピッカー（既存画像をプリセット）
   const fileInput = view.querySelector('#imgFile');
@@ -1020,13 +1058,16 @@ routes.editItem = async ({ id }) => {
   f.addEventListener('submit', async e => {
     e.preventDefault();
     const cat = f.category.value === '__new' ? f.categoryNew.value.trim() : f.category.value;
+    const storageLocation = f.storage_location.value === '__new'
+      ? f.storageLocationNew.value.trim()
+      : f.storage_location.value;
     const payload = {
       id: item.id,
       name: f.name.value.trim(),
       category: cat,
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
-      storage_location: f.storage_location.value.trim(),
+      storage_location: storageLocation,
       note: f.note.value.trim(),
       image: imageDataUrl,
     };

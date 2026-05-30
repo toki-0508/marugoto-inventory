@@ -68,6 +68,13 @@
         <label>総数<span class="req">*</span></label>
         <input name="purchase_quantity" type="number" min="1" inputmode="numeric" placeholder="例) 20" />
 
+        <label>保管場所</label>
+        <select name="purchase_storage_location">
+          <option value="">選択してください</option>
+          <option value="__new">＋ 新しい保管場所</option>
+        </select>
+        <input name="purchaseStorageLocationNew" placeholder="新しい保管場所" hidden style="margin-top:6px" />
+
         <label>備考</label>
         <textarea name="purchase_note" rows="3" placeholder="例) 文化祭準備用に購入"></textarea>
       </section>
