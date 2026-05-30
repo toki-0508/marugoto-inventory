@@ -49,6 +49,8 @@ gas/Code.gs             Apps Script バックエンド
 **storage_locations**
 | A: id | B: name | C: created_at |
 
+- 保管場所の選択肢はこの `storage_locations` シートで管理する
+
 ### 2. Apps Script を設定
 
 1. スプレッドシートのメニューから「拡張機能 → Apps Script」

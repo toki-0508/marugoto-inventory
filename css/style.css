@@ -459,26 +459,6 @@ main { flex: 1; padding: 12px 14px 90px; }
   font-size: 12px;
   margin-top: 4px;
 }
-.select-add-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin-top: 8px;
-}
-.select-add-row input {
-  margin: 0;
-}
-.btn-inline-add {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 700;
-  padding: 0 14px;
-  cursor: pointer;
-  white-space: nowrap;
-}
 .btn-primary {
   margin-top: 18px;
   width: 100%;

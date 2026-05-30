@@ -414,7 +414,6 @@ function setupSheets() {
 }
 
 function getStorageLocations() {
-  _syncStorageLocationsFromItems();
   return { storage_locations: _getStorageLocationNames() };
 }
 
