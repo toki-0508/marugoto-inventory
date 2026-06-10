@@ -11,6 +11,7 @@
 - 保管場所は候補として保存され、以後は選択肢から再利用できる
 - 申請中 / 承認済みの貸出依頼は「予約済み」として在庫に反映
 - 物品ごとに `物品` / `消耗品` を設定できる
+- 物品ごとに団体単位の最大貸出数を任意設定できる
 - 商品画像のアップロード対応
 - PWA としてホーム画面に追加可能
 
@@ -35,10 +36,11 @@ gas/Code.gs             Apps Script バックエンド
 新規のスプレッドシートに 4 つのシートをヘッダ付きで作る。
 
 **items**
-| A: id | B: name | C: category | D: item_type | E: total_quantity | F: storage_location | G: note | H: image |
+| A: id | B: name | C: category | D: item_type | E: total_quantity | F: organization_quantity_limit | G: storage_location | H: note | I: image |
 
 - `item_type` には `物品` / `消耗品` を入れる
 - 互換のため `equipment` / `consumable` でも動作する
+- `organization_quantity_limit` は任意。入力時は同一団体が同時に確保できる最大数として扱う
 
 **transactions**
 | A: id | B: item_id | C: type | D: quantity | E: target | F: timestamp | G: memo |

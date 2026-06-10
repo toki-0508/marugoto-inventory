@@ -66,10 +66,32 @@ const Mock = (() => {
     category: request.approved_category || request.purchase_category || '',
     item_type: normalizeItemType(request.approved_item_type || request.purchase_item_type),
     total_quantity: Number(request.approved_quantity || request.quantity || 0),
+    organization_quantity_limit: '',
     storage_location: request.approved_storage_location || request.purchase_storage_location || '',
     note: request.approved_note || request.purchase_note || '',
     image: request.approved_image || request.purchase_image || '',
   });
+
+  const requestCountsTowardOrganizationLimit = (request, itemType) => {
+    if (request.request_type !== 'loan') return false;
+    if (request.status === 'pending' || request.status === 'ready') return true;
+    if (request.status === 'received' && itemType !== 'consumable') return true;
+    return false;
+  };
+
+  const getOrganizationAllocatedQuantity = (itemId, organization, itemType, excludeRequestId) => {
+    const normalizedOrganization = String(organization || '').trim();
+    if (!itemId || !normalizedOrganization) return 0;
+    let allocated = 0;
+    requests.forEach(request => {
+      if (excludeRequestId && Number(request.id) === Number(excludeRequestId)) return;
+      if (Number(request.item_id) !== Number(itemId)) return;
+      if (String(request.organization || '').trim() !== normalizedOrganization) return;
+      if (!requestCountsTowardOrganizationLimit(request, itemType)) return;
+      allocated += Number(request.quantity) || 0;
+    });
+    return allocated;
+  };
 
   return {
     getItems: () => Promise.resolve({
@@ -117,6 +139,9 @@ const Mock = (() => {
       items.push({
         id: newId,
         ...payload,
+        organization_quantity_limit: payload.organization_quantity_limit === '' || payload.organization_quantity_limit == null
+          ? ''
+          : (Number(payload.organization_quantity_limit) || ''),
         storage_location: upsertStorageLocation(payload.storage_location),
         item_type: normalizeItemType(payload.item_type),
         image: payload.image || ''
@@ -126,10 +151,14 @@ const Mock = (() => {
     updateItem: payload => {
       const it = items.find(x => x.id === Number(payload.id));
       if (!it) return Promise.resolve({ error: 'not found' });
-      ['name', 'category', 'item_type', 'total_quantity', 'storage_location', 'note', 'image'].forEach(k => {
+      ['name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image'].forEach(k => {
         if (payload[k] === undefined) return;
         if (k === 'total_quantity') {
           it[k] = Number(payload[k]);
+          return;
+        }
+        if (k === 'organization_quantity_limit') {
+          it[k] = payload[k] === '' || payload[k] == null ? '' : (Number(payload[k]) || '');
           return;
         }
         if (k === 'item_type') {
@@ -185,6 +214,14 @@ const Mock = (() => {
         quantity = Number(payload.quantity);
         if (!quantity || quantity > available) {
           return Promise.resolve({ error: `在庫不足です（利用可能 ${available}）` });
+        }
+        const organizationLimit = Number(it.organization_quantity_limit) || 0;
+        if (organizationLimit > 0) {
+          const allocated = getOrganizationAllocatedQuantity(it.id, payload.organization, normalizeItemType(it.item_type));
+          if (allocated + quantity > organizationLimit) {
+            const remaining = Math.max(organizationLimit - allocated, 0);
+            return Promise.resolve({ error: `この団体の申請上限を超えています（残り ${remaining}）` });
+          }
         }
         itemId = Number(payload.item_id);
         itemName = it.name;

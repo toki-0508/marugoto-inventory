@@ -4,7 +4,7 @@
  * 【セットアップ手順】
  * 1) スプレッドシートを新規作成し、シートを 4 つ用意する
  *    シート名: items
- *      A1: id  B1: name  C1: category  D1: item_type  E1: total_quantity  F1: storage_location  G1: note  H1: image
+ *      A1: id  B1: name  C1: category  D1: item_type  E1: total_quantity  F1: organization_quantity_limit  G1: storage_location  H1: note  I1: image
  *    シート名: transactions
  *      A1: id  B1: item_id  C1: type  D1: quantity  E1: target  F1: timestamp  G1: memo
  *    シート名: requests
@@ -132,11 +132,27 @@ function _itemColumns(sheet) {
     name: headers.name || 2,
     category: headers.category || 3,
     total_quantity: headers.total_quantity || 4,
+    organization_quantity_limit: headers.organization_quantity_limit || 0,
     storage_location: headers.storage_location || 0,
     note: headers.note || 5,
     image: headers.image || 6,
     item_type: headers.item_type || 0
   };
+}
+
+function _ensureOrganizationQuantityLimitColumn(sheet) {
+  const headers = _headerMap(sheet);
+  const headerName = 'organization_quantity_limit';
+  const existingCol = headers[headerName] || 0;
+  if (existingCol) return existingCol;
+  const targetCol = sheet.getLastColumn() + 1;
+  sheet.getRange(1, targetCol).setValue(headerName).setFontWeight('bold');
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    const defaults = Array.from({ length: lastRow - 1 }, () => ['']);
+    sheet.getRange(2, targetCol, defaults.length, 1).setValues(defaults);
+  }
+  return targetCol;
 }
 
 function _ensureStorageLocationColumn(sheet) {
@@ -212,6 +228,10 @@ function _ensureItemTypeColumn(sheet) {
 function _itemFromRow(row, cols) {
   const itemType = _normalizeItemType(_cell(row, cols.item_type, ''));
   const totalQuantity = Number(_cell(row, cols.total_quantity, 0)) || 0;
+  const organizationQuantityLimitRaw = _cell(row, cols.organization_quantity_limit, '');
+  const organizationQuantityLimit = organizationQuantityLimitRaw === ''
+    ? ''
+    : (Number(organizationQuantityLimitRaw) || '');
   return {
     id: _cell(row, cols.id, ''),
     name: _cell(row, cols.name, ''),
@@ -219,6 +239,7 @@ function _itemFromRow(row, cols) {
     item_type: itemType,
     item_type_label: ITEM_TYPE_LABELS[itemType] || ITEM_TYPE_LABELS.equipment,
     total_quantity: totalQuantity,
+    organization_quantity_limit: organizationQuantityLimit,
     storage_location: _cell(row, cols.storage_location, '') || '',
     note: _cell(row, cols.note, '') || '',
     image: _cell(row, cols.image, '') || ''
@@ -362,10 +383,34 @@ function _buildApprovedPurchaseDraft(req, approvedItem) {
     category: (approvedItem && approvedItem.category) || req.approved_category || '',
     item_type: _normalizeItemType((approvedItem && approvedItem.item_type) || req.approved_item_type || req.purchase_item_type),
     total_quantity: quantity,
+    organization_quantity_limit: (approvedItem && approvedItem.organization_quantity_limit) || '',
     storage_location: (approvedItem && approvedItem.storage_location) || req.approved_storage_location || req.purchase_storage_location || '',
     note: (approvedItem && approvedItem.note) || req.approved_note || req.purchase_note || '',
     image: (approvedItem && approvedItem.image) || req.approved_image || req.purchase_image || ''
   };
+}
+
+function _requestCountsTowardOrganizationLimit(request, itemType) {
+  if (request.request_type !== 'loan') return false;
+  if (request.status === 'pending' || request.status === 'ready') return true;
+  if (request.status === 'received' && itemType !== 'consumable') return true;
+  return false;
+}
+
+function _getOrganizationAllocatedQuantity(itemId, organization, itemType, excludeRequestId) {
+  const normalizedOrganization = String(organization || '').trim();
+  if (!itemId || !normalizedOrganization) return 0;
+  const requests = _getRequestsData();
+  let allocated = 0;
+  for (let i = 0; i < requests.length; i++) {
+    const request = requests[i];
+    if (excludeRequestId && Number(request.id) === Number(excludeRequestId)) continue;
+    if (Number(request.item_id) !== Number(itemId)) continue;
+    if (String(request.organization || '').trim() !== normalizedOrganization) continue;
+    if (!_requestCountsTowardOrganizationLimit(request, itemType)) continue;
+    allocated += Number(request.quantity) || 0;
+  }
+  return allocated;
 }
 
 /**
@@ -403,9 +448,10 @@ function setupSheets() {
       s.setFrozenRows(1);
     }
   };
-  ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'storage_location', 'note', 'image']);
+  ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image']);
   _ensureItemTypeColumn(_sheet(ITEMS_SHEET));
   _ensureStorageLocationColumn(_sheet(ITEMS_SHEET));
+  _ensureOrganizationQuantityLimitColumn(_sheet(ITEMS_SHEET));
   ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo']);
   ensure(REQ_SHEET, _requestHeaders());
   ensure(STORAGE_LOCATIONS_SHEET, ['id', 'name', 'created_at']);
@@ -513,6 +559,7 @@ function addItem(p) {
   const sheet = _sheet(ITEMS_SHEET);
   const cols = _itemColumns(sheet);
   const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
+  const orgLimitCol = cols.organization_quantity_limit || _ensureOrganizationQuantityLimitColumn(sheet);
   const storageCol = cols.storage_location || _ensureStorageLocationColumn(sheet);
   const storageLocation = _upsertStorageLocation(p.storage_location || '');
   const newId = _nextId(sheet);
@@ -521,6 +568,9 @@ function addItem(p) {
   row[cols.name - 1] = p.name;
   row[cols.category - 1] = p.category || '';
   row[cols.total_quantity - 1] = Number(p.total_quantity) || 0;
+  row[orgLimitCol - 1] = p.organization_quantity_limit === '' || p.organization_quantity_limit == null
+    ? ''
+    : (Number(p.organization_quantity_limit) || '');
   row[storageCol - 1] = storageLocation;
   row[cols.note - 1] = p.note || '';
   row[cols.image - 1] = p.image || '';
@@ -534,6 +584,7 @@ function updateItem(p) {
   const sheet = _sheet(ITEMS_SHEET);
   const cols = _itemColumns(sheet);
   const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
+  const orgLimitCol = cols.organization_quantity_limit || _ensureOrganizationQuantityLimitColumn(sheet);
   const storageCol = cols.storage_location || _ensureStorageLocationColumn(sheet);
   const values = sheet.getDataRange().getValues();
   for (let i = 1; i < values.length; i++) {
@@ -543,6 +594,13 @@ function updateItem(p) {
       if (p.category       !== undefined) sheet.getRange(row, cols.category).setValue(p.category);
       if (p.item_type      !== undefined) sheet.getRange(row, itemTypeCol).setValue(ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment);
       if (p.total_quantity !== undefined) sheet.getRange(row, cols.total_quantity).setValue(Number(p.total_quantity) || 0);
+      if (p.organization_quantity_limit !== undefined) {
+        sheet.getRange(row, orgLimitCol).setValue(
+          p.organization_quantity_limit === '' || p.organization_quantity_limit == null
+            ? ''
+            : (Number(p.organization_quantity_limit) || '')
+        );
+      }
       if (p.storage_location !== undefined) sheet.getRange(row, storageCol).setValue(_upsertStorageLocation(p.storage_location));
       if (p.note           !== undefined) sheet.getRange(row, cols.note).setValue(p.note);
       if (p.image          !== undefined) sheet.getRange(row, cols.image).setValue(p.image);
@@ -627,6 +685,14 @@ function addRequest(p) {
     quantity = Number(p.quantity) || 0;
     if (!quantity || quantity > available) {
       return { error: '在庫不足です（利用可能 ' + available + '）' };
+    }
+    const organizationLimit = Number(item.organization_quantity_limit) || 0;
+    if (organizationLimit > 0) {
+      const allocated = _getOrganizationAllocatedQuantity(item.id, p.organization, item.item_type);
+      if (allocated + quantity > organizationLimit) {
+        const remaining = Math.max(organizationLimit - allocated, 0);
+        return { error: 'この団体の申請上限を超えています（残り ' + remaining + '）' };
+      }
     }
     item_id = Number(p.item_id);
     item_name = item.name;

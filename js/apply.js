@@ -145,13 +145,35 @@
   let allItems = [];
   let curCat = '';
   let curItemType = '';
+  let loanRequests = [];
   const stockMap = new Map();
+  const itemMap = new Map();
+  const organizationInput = form.organization;
   const purchaseStorageLocationSelect = form.purchase_storage_location;
   const purchaseStorageLocationNewInput = form.purchaseStorageLocationNew;
   const syncPurchaseStorageLocationField = bindSelectableField(
     purchaseStorageLocationSelect,
     purchaseStorageLocationNewInput
   );
+
+  const requestCountsTowardOrganizationLimit = (request, itemType) => {
+    if (request.request_type !== 'loan') return false;
+    if (request.status === 'pending' || request.status === 'ready') return true;
+    if (request.status === 'received' && itemType !== 'consumable') return true;
+    return false;
+  };
+
+  const getOrganizationAllocatedQuantity = (itemId, organization) => {
+    const item = itemMap.get(String(itemId));
+    const normalizedOrganization = String(organization || '').trim();
+    if (!item || !normalizedOrganization) return 0;
+    return loanRequests.reduce((total, request) => {
+      if (Number(request.item_id) !== Number(itemId)) return total;
+      if (String(request.organization || '').trim() !== normalizedOrganization) return total;
+      if (!requestCountsTowardOrganizationLimit(request, item.item_type)) return total;
+      return total + (Number(request.quantity) || 0);
+    }, 0);
+  };
 
   const renderList = () => {
     const q = pickerSearch.value.trim();
@@ -268,9 +290,28 @@
       qtyErr.hidden = true;
       return true;
     }
-    const max = stockMap.get(itemId);
+    const item = itemMap.get(String(itemId));
+    const stockMax = stockMap.get(itemId);
+    let limitMax = Infinity;
+    let limitMessage = '';
+    const organizationLimit = Number(item?.organization_quantity_limit) || 0;
+    const organization = organizationInput.value.trim();
+    if (organizationLimit > 0 && organization) {
+      const allocated = getOrganizationAllocatedQuantity(itemId, organization);
+      limitMax = Math.max(organizationLimit - allocated, 0);
+      limitMessage = `団体上限は残り ${limitMax} 個です`;
+    }
+    const max = Math.min(stockMax, limitMax);
+    if (max <= 0 && organizationLimit > 0 && organization) {
+      qtyErr.textContent = limitMessage;
+      qtyErr.hidden = false;
+      form.quantity.classList.add('invalid');
+      return false;
+    }
     if (qty > max) {
-      qtyErr.textContent = `在庫を超えています（最大 ${max}）`;
+      qtyErr.textContent = max === stockMax || !isFinite(limitMax)
+        ? `在庫を超えています（最大 ${stockMax}）`
+        : `${limitMessage}（在庫上限 ${stockMax}）`;
       qtyErr.hidden = false;
       form.quantity.classList.add('invalid');
       return false;
@@ -280,11 +321,13 @@
     return true;
   };
   form.quantity.addEventListener('input', validateQty);
+  form.organization.addEventListener('input', validateQty);
 
   try {
-    const [itemsRes, storageLocationsRes] = await Promise.all([
+    const [itemsRes, storageLocationsRes, requestsRes] = await Promise.all([
       Api.getItems(),
       Api.getStorageLocations(),
+      Api.getRequests(),
     ]);
     if (itemsRes.error) {
       showToast('物品取得エラー: ' + itemsRes.error);
@@ -292,9 +335,16 @@
     if (storageLocationsRes.error) {
       showToast('保管場所取得エラー: ' + storageLocationsRes.error);
     }
+    if (requestsRes.error) {
+      showToast('申請取得エラー: ' + requestsRes.error);
+    }
     const items = itemsRes.items || [];
+    loanRequests = requestsRes.requests || [];
     allItems = items.filter(i => i.current_quantity > 0);
-    allItems.forEach(i => stockMap.set(String(i.id), i.current_quantity));
+    allItems.forEach(i => {
+      stockMap.set(String(i.id), i.current_quantity);
+      itemMap.set(String(i.id), i);
+    });
     const storageLocations = uniqueNonEmptyValues([
       ...(storageLocationsRes.storage_locations || []),
       ...items.map(i => i.storage_location),

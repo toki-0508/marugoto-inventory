@@ -278,6 +278,7 @@ routes.home = async () => {
             <div class="item-name">${escape(i.name)}</div>
             <div class="item-cat">${escape(i.category || '')} / ${escape(getItemTypeLabel(i))}</div>
             <div class="item-note">${i.storage_location ? '保管場所：' + escape(i.storage_location) : ''}</div>
+            <div class="item-note">${i.organization_quantity_limit ? '団体上限：' + escape(i.organization_quantity_limit) + '個' : ''}</div>
             <div class="item-note">${i.note ? '備考：' + escape(i.note) : ''}</div>
           </div>
         </div>
@@ -342,6 +343,7 @@ routes.detail = async ({ id }) => {
       <div class="meta">
         カテゴリ：${escape(item.category || '-')}<br>
         種別：${escape(getItemTypeLabel(item))}<br>
+        団体上限：${escape(item.organization_quantity_limit || '-')}<br>
         保管場所：${escape(item.storage_location || '-')}<br>
         備考：${escape(item.note || '-')}
       </div>
@@ -870,6 +872,9 @@ routes.add = async () => {
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="0" required inputmode="numeric" placeholder="例) 100" />
 
+      <label>団体ごとの最大貸出数</label>
+      <input name="organization_quantity_limit" type="number" min="1" inputmode="numeric" placeholder="未入力なら制限なし" />
+
       <label>保管場所</label>
       <select name="storage_location">
         <option value="">選択してください</option>
@@ -939,6 +944,7 @@ routes.add = async () => {
       category: cat,
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
+      organization_quantity_limit: f.organization_quantity_limit.value ? Number(f.organization_quantity_limit.value) : '',
       storage_location: storageLocation,
       note: f.note.value.trim(),
       image: imageDataUrl,
@@ -1008,6 +1014,9 @@ routes.editItem = async ({ id }) => {
 
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="0" required value="${item.total_quantity}" />
+
+      <label>団体ごとの最大貸出数</label>
+      <input name="organization_quantity_limit" type="number" min="1" inputmode="numeric" value="${escape(item.organization_quantity_limit || '')}" placeholder="未入力なら制限なし" />
 
       <label>保管場所</label>
       <select name="storage_location">
@@ -1080,6 +1089,7 @@ routes.editItem = async ({ id }) => {
       category: cat,
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
+      organization_quantity_limit: f.organization_quantity_limit.value ? Number(f.organization_quantity_limit.value) : '',
       storage_location: storageLocation,
       note: f.note.value.trim(),
       image: imageDataUrl,
