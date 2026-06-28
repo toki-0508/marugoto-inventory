@@ -70,6 +70,7 @@ const Mock = (() => {
     storage_location: request.approved_storage_location || request.purchase_storage_location || '',
     note: request.approved_note || request.purchase_note || '',
     image: request.approved_image || request.purchase_image || '',
+    aliases: '',
   });
 
   const requestCountsTowardOrganizationLimit = (request, itemType) => {
@@ -144,14 +145,15 @@ const Mock = (() => {
           : (Number(payload.organization_quantity_limit) || ''),
         storage_location: upsertStorageLocation(payload.storage_location),
         item_type: normalizeItemType(payload.item_type),
-        image: payload.image || ''
+        image: payload.image || '',
+        aliases: payload.aliases || ''
       });
       return Promise.resolve({ success: true, id: newId });
     },
     updateItem: payload => {
       const it = items.find(x => x.id === Number(payload.id));
       if (!it) return Promise.resolve({ error: 'not found' });
-      ['name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image'].forEach(k => {
+      ['name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image', 'aliases'].forEach(k => {
         if (payload[k] === undefined) return;
         if (k === 'total_quantity') {
           it[k] = Number(payload[k]);

@@ -4,7 +4,7 @@
  * 【セットアップ手順】
  * 1) スプレッドシートを新規作成し、シートを 4 つ用意する
  *    シート名: items
- *      A1: id  B1: name  C1: category  D1: item_type  E1: total_quantity  F1: organization_quantity_limit  G1: storage_location  H1: note  I1: image
+ *      A1: id  B1: name  C1: category  D1: item_type  E1: total_quantity  F1: organization_quantity_limit  G1: storage_location  H1: note  I1: image  J1: aliases
  *    シート名: transactions
  *      A1: id  B1: item_id  C1: type  D1: quantity  E1: target  F1: timestamp  G1: memo
  *    シート名: requests
@@ -136,6 +136,7 @@ function _itemColumns(sheet) {
     storage_location: headers.storage_location || 0,
     note: headers.note || 5,
     image: headers.image || 6,
+    aliases: headers.aliases || 0,
     item_type: headers.item_type || 0
   };
 }
@@ -155,39 +156,34 @@ function _ensureOrganizationQuantityLimitColumn(sheet) {
   return targetCol;
 }
 
-function _ensureStorageLocationColumn(sheet) {
+function _ensureAliasesColumn(sheet) {
   const headers = _headerMap(sheet);
-  const totalCol = headers.total_quantity || 4;
-  const desiredCol = totalCol + 1;
+  const headerName = 'aliases';
+  const existingCol = headers[headerName] || 0;
+  if (existingCol) return existingCol;
+  const targetCol = sheet.getLastColumn() + 1;
+  sheet.getRange(1, targetCol).setValue(headerName).setFontWeight('bold');
   const lastRow = sheet.getLastRow();
-  const existingCol = headers.storage_location || 0;
-
-  if (existingCol === desiredCol) return existingCol;
-
-  if (existingCol) {
-    const values = lastRow > 0 ? sheet.getRange(1, existingCol, lastRow, 1).getValues() : [['storage_location']];
-    sheet.insertColumnAfter(totalCol);
-    sheet.getRange(1, desiredCol, values.length, 1).setValues(values).setFontWeight('bold');
-    const deleteCol = existingCol >= desiredCol ? existingCol + 1 : existingCol;
-    sheet.deleteColumn(deleteCol);
-    return desiredCol;
-  }
-
-  const currentLastCol = sheet.getLastColumn();
-  const headerAtDesired = desiredCol <= currentLastCol
-    ? String(sheet.getRange(1, desiredCol).getValues()[0][0] || '').trim()
-    : '';
-
-  if (headerAtDesired) {
-    sheet.insertColumnAfter(totalCol);
-  }
-
-  sheet.getRange(1, desiredCol).setValue('storage_location').setFontWeight('bold');
   if (lastRow >= 2) {
     const defaults = Array.from({ length: lastRow - 1 }, () => ['']);
-    sheet.getRange(2, desiredCol, defaults.length, 1).setValues(defaults);
+    sheet.getRange(2, targetCol, defaults.length, 1).setValues(defaults);
   }
-  return desiredCol;
+  return targetCol;
+}
+
+function _ensureStorageLocationColumn(sheet) {
+  const headers = _headerMap(sheet);
+  const existingCol = headers.storage_location || 0;
+  if (existingCol) return existingCol;
+
+  const targetCol = sheet.getLastColumn() + 1;
+  const lastRow = sheet.getLastRow();
+  sheet.getRange(1, targetCol).setValue('storage_location').setFontWeight('bold');
+  if (lastRow >= 2) {
+    const defaults = Array.from({ length: lastRow - 1 }, () => ['']);
+    sheet.getRange(2, targetCol, defaults.length, 1).setValues(defaults);
+  }
+  return targetCol;
 }
 
 function _ensureItemTypeColumn(sheet) {
@@ -242,7 +238,8 @@ function _itemFromRow(row, cols) {
     organization_quantity_limit: organizationQuantityLimit,
     storage_location: _cell(row, cols.storage_location, '') || '',
     note: _cell(row, cols.note, '') || '',
-    image: _cell(row, cols.image, '') || ''
+    image: _cell(row, cols.image, '') || '',
+    aliases: _cell(row, cols.aliases, '') || ''
   };
 }
 
@@ -386,7 +383,8 @@ function _buildApprovedPurchaseDraft(req, approvedItem) {
     organization_quantity_limit: (approvedItem && approvedItem.organization_quantity_limit) || '',
     storage_location: (approvedItem && approvedItem.storage_location) || req.approved_storage_location || req.purchase_storage_location || '',
     note: (approvedItem && approvedItem.note) || req.approved_note || req.purchase_note || '',
-    image: (approvedItem && approvedItem.image) || req.approved_image || req.purchase_image || ''
+    image: (approvedItem && approvedItem.image) || req.approved_image || req.purchase_image || '',
+    aliases: (approvedItem && approvedItem.aliases) || ''
   };
 }
 
@@ -448,10 +446,11 @@ function setupSheets() {
       s.setFrozenRows(1);
     }
   };
-  ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image']);
+  ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image', 'aliases']);
   _ensureItemTypeColumn(_sheet(ITEMS_SHEET));
   _ensureStorageLocationColumn(_sheet(ITEMS_SHEET));
   _ensureOrganizationQuantityLimitColumn(_sheet(ITEMS_SHEET));
+  _ensureAliasesColumn(_sheet(ITEMS_SHEET));
   ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo']);
   ensure(REQ_SHEET, _requestHeaders());
   ensure(STORAGE_LOCATIONS_SHEET, ['id', 'name', 'created_at']);
@@ -561,6 +560,7 @@ function addItem(p) {
   const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
   const orgLimitCol = cols.organization_quantity_limit || _ensureOrganizationQuantityLimitColumn(sheet);
   const storageCol = cols.storage_location || _ensureStorageLocationColumn(sheet);
+  const aliasesCol = cols.aliases || _ensureAliasesColumn(sheet);
   const storageLocation = _upsertStorageLocation(p.storage_location || '');
   const newId = _nextId(sheet);
   const row = [];
@@ -574,6 +574,7 @@ function addItem(p) {
   row[storageCol - 1] = storageLocation;
   row[cols.note - 1] = p.note || '';
   row[cols.image - 1] = p.image || '';
+  row[aliasesCol - 1] = p.aliases || '';
   row[itemTypeCol - 1] = ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment;
   sheet.appendRow(row);
   return { success: true, id: newId };
@@ -586,6 +587,7 @@ function updateItem(p) {
   const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
   const orgLimitCol = cols.organization_quantity_limit || _ensureOrganizationQuantityLimitColumn(sheet);
   const storageCol = cols.storage_location || _ensureStorageLocationColumn(sheet);
+  const aliasesCol = cols.aliases || _ensureAliasesColumn(sheet);
   const values = sheet.getDataRange().getValues();
   for (let i = 1; i < values.length; i++) {
     if (_cell(values[i], cols.id, '') == p.id) {
@@ -604,6 +606,7 @@ function updateItem(p) {
       if (p.storage_location !== undefined) sheet.getRange(row, storageCol).setValue(_upsertStorageLocation(p.storage_location));
       if (p.note           !== undefined) sheet.getRange(row, cols.note).setValue(p.note);
       if (p.image          !== undefined) sheet.getRange(row, cols.image).setValue(p.image);
+      if (p.aliases        !== undefined) sheet.getRange(row, aliasesCol).setValue(p.aliases);
       return { success: true };
     }
   }
@@ -803,6 +806,7 @@ function updateRequestStatus(p) {
     if (itemCols.storage_location) newRow[itemCols.storage_location - 1] = draft.storage_location || '';
     newRow[itemCols.note - 1] = draft.note;
     newRow[itemCols.image - 1] = draft.image;
+    if (itemCols.aliases) newRow[itemCols.aliases - 1] = draft.aliases || '';
     newRow[itemTypeCol - 1] = ITEM_TYPE_LABELS[_normalizeItemType(draft.item_type)] || ITEM_TYPE_LABELS.equipment;
     itemSheet.appendRow(newRow);
     sheet.getRange(rowIdx, 19).setValue(draft.name);            // S: approved_item_name

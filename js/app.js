@@ -234,7 +234,7 @@ routes.home = async () => {
   setTabActive('home');
   view.innerHTML = `
     <div class="search-bar">
-      <div class="search-icon" style="flex:1;display:flex"><input id="q" placeholder="物品名で検索" /></div>
+      <div class="search-icon" style="flex:1;display:flex"><input id="q" placeholder="物品名・別名で検索" /></div>
       <select id="cat"><option value="">すべてのカテゴリ</option></select>
       <select id="itemType">
         <option value="">すべての種別</option>
@@ -263,7 +263,7 @@ routes.home = async () => {
     const cat = catSel.value;
     const itemType = typeSel.value;
     const filtered = items.filter(i =>
-      (!q || i.name.includes(q)) &&
+      ItemSearch.matchesItem(i, q) &&
       (!cat || i.category === cat) &&
       (!itemType || getItemType(i) === itemType)
     );
@@ -277,6 +277,7 @@ routes.home = async () => {
           <div class="item-info">
             <div class="item-name">${escape(i.name)}</div>
             <div class="item-cat">${escape(i.category || '')} / ${escape(getItemTypeLabel(i))}</div>
+            ${i.aliases ? `<div class="item-note">別名：${escape(ItemSearch.formatAliases(i.aliases))}</div>` : ''}
             <div class="item-note">${i.storage_location ? '保管場所：' + escape(i.storage_location) : ''}</div>
             <div class="item-note">${i.organization_quantity_limit ? '団体上限：' + escape(i.organization_quantity_limit) + '個' : ''}</div>
             <div class="item-note">${i.note ? '備考：' + escape(i.note) : ''}</div>
@@ -343,6 +344,7 @@ routes.detail = async ({ id }) => {
       <div class="meta">
         カテゴリ：${escape(item.category || '-')}<br>
         種別：${escape(getItemTypeLabel(item))}<br>
+        別名：${escape(ItemSearch.formatAliases(item.aliases) || '-')}<br>
         団体上限：${escape(item.organization_quantity_limit || '-')}<br>
         保管場所：${escape(item.storage_location || '-')}<br>
         備考：${escape(item.note || '-')}
@@ -672,6 +674,7 @@ routes.approvePurchase = async ({ id }) => {
     category: requestData.approved_category || '',
     item_type: requestData.approved_item_type || requestData.purchase_item_type || 'equipment',
     total_quantity: requestData.approved_quantity || requestData.quantity || 0,
+    aliases: '',
     storage_location: requestData.approved_storage_location || requestData.purchase_storage_location || '',
     note: requestData.approved_note || requestData.purchase_note || '',
     image: requestData.approved_image || requestData.purchase_image || '',
@@ -700,6 +703,9 @@ routes.approvePurchase = async ({ id }) => {
 
       <label>物品名<span class="req">*</span></label>
       <input name="name" required value="${escape(approvedDraft.name)}" />
+
+      <label>別名</label>
+      <textarea name="aliases" rows="2" placeholder="例) パイプいす, 椅子&#10;カンマ区切りまたは改行で複数入力">${escape(approvedDraft.aliases || '')}</textarea>
 
       <label>カテゴリ<span class="req">*</span></label>
       <select name="category" required>
@@ -793,6 +799,7 @@ routes.approvePurchase = async ({ id }) => {
       category,
       item_type: form.item_type.value,
       total_quantity: Number(form.total_quantity.value),
+      aliases: ItemSearch.formatAliases(form.aliases.value),
       storage_location: storageLocation,
       note: form.note.value.trim(),
       image: imageDataUrl,
@@ -854,6 +861,9 @@ routes.add = async () => {
 
       <label>物品名<span class="req">*</span></label>
       <input name="name" required placeholder="例) パイプ椅子" />
+
+      <label>別名</label>
+      <textarea name="aliases" rows="2" placeholder="例) パイプいす, 椅子&#10;カンマ区切りまたは改行で複数入力"></textarea>
 
       <label>カテゴリ<span class="req">*</span></label>
       <select name="category" required>
@@ -945,6 +955,7 @@ routes.add = async () => {
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
       organization_quantity_limit: f.organization_quantity_limit.value ? Number(f.organization_quantity_limit.value) : '',
+      aliases: ItemSearch.formatAliases(f.aliases.value),
       storage_location: storageLocation,
       note: f.note.value.trim(),
       image: imageDataUrl,
@@ -997,6 +1008,9 @@ routes.editItem = async ({ id }) => {
 
       <label>物品名<span class="req">*</span></label>
       <input name="name" required value="${escape(item.name)}" />
+
+      <label>別名</label>
+      <textarea name="aliases" rows="2" placeholder="例) パイプいす, 椅子&#10;カンマ区切りまたは改行で複数入力">${escape(item.aliases || '')}</textarea>
 
       <label>カテゴリ<span class="req">*</span></label>
       <select name="category" required>
@@ -1090,6 +1104,7 @@ routes.editItem = async ({ id }) => {
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
       organization_quantity_limit: f.organization_quantity_limit.value ? Number(f.organization_quantity_limit.value) : '',
+      aliases: ItemSearch.formatAliases(f.aliases.value),
       storage_location: storageLocation,
       note: f.note.value.trim(),
       image: imageDataUrl,

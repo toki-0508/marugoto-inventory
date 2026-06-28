@@ -180,7 +180,7 @@
     const filtered = allItems.filter(i =>
       (!curCat || i.category === curCat) &&
       (!curItemType || i.item_type === curItemType) &&
-      (!q || i.name.includes(q))
+      ItemSearch.matchesItem(i, q)
     );
     if (!filtered.length) {
       pickerList.innerHTML = '<div class="empty">該当する物品がありません</div>';
@@ -194,6 +194,7 @@
         <div class="info">
           <div class="nm">${escape(i.name)}</div>
           <div class="ct">${escape(i.category || '-')}</div>
+          ${i.aliases ? `<div class="ct">別名: ${escape(ItemSearch.formatAliases(i.aliases))}</div>` : ''}
         </div>
         <div class="stk">在庫 ${i.current_quantity}</div>
       </div>
