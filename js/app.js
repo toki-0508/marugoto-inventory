@@ -674,6 +674,7 @@ routes.approvePurchase = async ({ id }) => {
     category: requestData.approved_category || '',
     item_type: requestData.approved_item_type || requestData.purchase_item_type || 'equipment',
     total_quantity: requestData.approved_quantity || requestData.quantity || 0,
+    organization_quantity_limit: '',
     aliases: '',
     storage_location: requestData.approved_storage_location || requestData.purchase_storage_location || '',
     note: requestData.approved_note || requestData.purchase_note || '',
@@ -723,6 +724,9 @@ routes.approvePurchase = async ({ id }) => {
 
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="1" required value="${approvedDraft.total_quantity}" />
+
+      <label>団体ごとの最大貸出数（任意）</label>
+      <input name="organization_quantity_limit" type="number" min="1" inputmode="numeric" value="${escape(approvedDraft.organization_quantity_limit || '')}" placeholder="未入力なら制限なし" />
 
       <label>保管場所</label>
       <select name="storage_location">
@@ -799,6 +803,7 @@ routes.approvePurchase = async ({ id }) => {
       category,
       item_type: form.item_type.value,
       total_quantity: Number(form.total_quantity.value),
+      organization_quantity_limit: form.organization_quantity_limit.value ? Number(form.organization_quantity_limit.value) : '',
       aliases: ItemSearch.formatAliases(form.aliases.value),
       storage_location: storageLocation,
       note: form.note.value.trim(),

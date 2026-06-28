@@ -221,6 +221,14 @@ function _ensureItemTypeColumn(sheet) {
   return desiredCol;
 }
 
+function _prepareItemColumns(sheet) {
+  _ensureItemTypeColumn(sheet);
+  _ensureOrganizationQuantityLimitColumn(sheet);
+  _ensureStorageLocationColumn(sheet);
+  _ensureAliasesColumn(sheet);
+  return _itemColumns(sheet);
+}
+
 function _itemFromRow(row, cols) {
   const itemType = _normalizeItemType(_cell(row, cols.item_type, ''));
   const totalQuantity = Number(_cell(row, cols.total_quantity, 0)) || 0;
@@ -412,7 +420,7 @@ function _getOrganizationAllocatedQuantity(itemId, organization, itemType, exclu
 }
 
 /**
- * 必要な 3 シートをヘッダ付きで自動作成する。
+ * 必要なシートをヘッダ付きで自動作成する。
  * Apps Script のエディタで関数選択 → 実行ボタンを押すだけ。
  */
 function setupSheets() {
@@ -556,11 +564,7 @@ function addTransaction(p) {
 function addItem(p) {
   if (!p || !p.name) return { error: 'invalid payload' };
   const sheet = _sheet(ITEMS_SHEET);
-  const cols = _itemColumns(sheet);
-  const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
-  const orgLimitCol = cols.organization_quantity_limit || _ensureOrganizationQuantityLimitColumn(sheet);
-  const storageCol = cols.storage_location || _ensureStorageLocationColumn(sheet);
-  const aliasesCol = cols.aliases || _ensureAliasesColumn(sheet);
+  const cols = _prepareItemColumns(sheet);
   const storageLocation = _upsertStorageLocation(p.storage_location || '');
   const newId = _nextId(sheet);
   const row = [];
@@ -568,14 +572,14 @@ function addItem(p) {
   row[cols.name - 1] = p.name;
   row[cols.category - 1] = p.category || '';
   row[cols.total_quantity - 1] = Number(p.total_quantity) || 0;
-  row[orgLimitCol - 1] = p.organization_quantity_limit === '' || p.organization_quantity_limit == null
+  row[cols.organization_quantity_limit - 1] = p.organization_quantity_limit === '' || p.organization_quantity_limit == null
     ? ''
     : (Number(p.organization_quantity_limit) || '');
-  row[storageCol - 1] = storageLocation;
+  row[cols.storage_location - 1] = storageLocation;
   row[cols.note - 1] = p.note || '';
   row[cols.image - 1] = p.image || '';
-  row[aliasesCol - 1] = p.aliases || '';
-  row[itemTypeCol - 1] = ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment;
+  row[cols.aliases - 1] = p.aliases || '';
+  row[cols.item_type - 1] = ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment;
   sheet.appendRow(row);
   return { success: true, id: newId };
 }
@@ -583,30 +587,26 @@ function addItem(p) {
 function updateItem(p) {
   if (!p || !p.id) return { error: 'invalid payload' };
   const sheet = _sheet(ITEMS_SHEET);
-  const cols = _itemColumns(sheet);
-  const itemTypeCol = cols.item_type || _ensureItemTypeColumn(sheet);
-  const orgLimitCol = cols.organization_quantity_limit || _ensureOrganizationQuantityLimitColumn(sheet);
-  const storageCol = cols.storage_location || _ensureStorageLocationColumn(sheet);
-  const aliasesCol = cols.aliases || _ensureAliasesColumn(sheet);
+  const cols = _prepareItemColumns(sheet);
   const values = sheet.getDataRange().getValues();
   for (let i = 1; i < values.length; i++) {
     if (_cell(values[i], cols.id, '') == p.id) {
       const row = i + 1;
       if (p.name           !== undefined) sheet.getRange(row, cols.name).setValue(p.name);
       if (p.category       !== undefined) sheet.getRange(row, cols.category).setValue(p.category);
-      if (p.item_type      !== undefined) sheet.getRange(row, itemTypeCol).setValue(ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment);
+      if (p.item_type      !== undefined) sheet.getRange(row, cols.item_type).setValue(ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment);
       if (p.total_quantity !== undefined) sheet.getRange(row, cols.total_quantity).setValue(Number(p.total_quantity) || 0);
       if (p.organization_quantity_limit !== undefined) {
-        sheet.getRange(row, orgLimitCol).setValue(
+        sheet.getRange(row, cols.organization_quantity_limit).setValue(
           p.organization_quantity_limit === '' || p.organization_quantity_limit == null
             ? ''
             : (Number(p.organization_quantity_limit) || '')
         );
       }
-      if (p.storage_location !== undefined) sheet.getRange(row, storageCol).setValue(_upsertStorageLocation(p.storage_location));
+      if (p.storage_location !== undefined) sheet.getRange(row, cols.storage_location).setValue(_upsertStorageLocation(p.storage_location));
       if (p.note           !== undefined) sheet.getRange(row, cols.note).setValue(p.note);
       if (p.image          !== undefined) sheet.getRange(row, cols.image).setValue(p.image);
-      if (p.aliases        !== undefined) sheet.getRange(row, aliasesCol).setValue(p.aliases);
+      if (p.aliases        !== undefined) sheet.getRange(row, cols.aliases).setValue(p.aliases);
       return { success: true };
     }
   }
@@ -795,19 +795,21 @@ function updateRequestStatus(p) {
     }
     draft.storage_location = _upsertStorageLocation(draft.storage_location);
     const itemSheet = _sheet(ITEMS_SHEET);
-    const itemCols = _itemColumns(itemSheet);
-    const itemTypeCol = itemCols.item_type || _ensureItemTypeColumn(itemSheet);
+    const itemCols = _prepareItemColumns(itemSheet);
     const newItemId = _nextId(itemSheet);
     const newRow = [];
     newRow[itemCols.id - 1] = newItemId;
     newRow[itemCols.name - 1] = draft.name;
     newRow[itemCols.category - 1] = draft.category;
     newRow[itemCols.total_quantity - 1] = draft.total_quantity;
-    if (itemCols.storage_location) newRow[itemCols.storage_location - 1] = draft.storage_location || '';
+    newRow[itemCols.organization_quantity_limit - 1] = draft.organization_quantity_limit === '' || draft.organization_quantity_limit == null
+      ? ''
+      : (Number(draft.organization_quantity_limit) || '');
+    newRow[itemCols.storage_location - 1] = draft.storage_location || '';
     newRow[itemCols.note - 1] = draft.note;
     newRow[itemCols.image - 1] = draft.image;
-    if (itemCols.aliases) newRow[itemCols.aliases - 1] = draft.aliases || '';
-    newRow[itemTypeCol - 1] = ITEM_TYPE_LABELS[_normalizeItemType(draft.item_type)] || ITEM_TYPE_LABELS.equipment;
+    newRow[itemCols.aliases - 1] = draft.aliases || '';
+    newRow[itemCols.item_type - 1] = ITEM_TYPE_LABELS[_normalizeItemType(draft.item_type)] || ITEM_TYPE_LABELS.equipment;
     itemSheet.appendRow(newRow);
     sheet.getRange(rowIdx, 19).setValue(draft.name);            // S: approved_item_name
     sheet.getRange(rowIdx, 20).setValue(draft.category);        // T: approved_category
