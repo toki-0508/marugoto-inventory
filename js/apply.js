@@ -28,6 +28,8 @@
 
   let requestType = 'loan';
   let purchaseImageDataUrl = '';
+  const ITEM_CACHE_KEY = 'marugoto_apply_items_cache_v1';
+  const ITEM_CACHE_TTL_MS = 60 * 1000;
   const uniqueNonEmptyValues = values => [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))];
   const bindSelectableField = (select, newInput) => {
     if (!select || !newInput) return () => {};
@@ -146,6 +148,8 @@
   let curItemType = '';
   let loanRequests = [];
   let itemsLoaded = false;
+  let loanRequestsLoaded = false;
+  let loanRequestsPromise = null;
   const selectedLoanItems = new Map();
   const stockMap = new Map();
   const itemMap = new Map();
@@ -163,6 +167,92 @@
     if (request.status === 'received' && itemType !== 'consumable') return true;
     return false;
   };
+
+  const toFiniteNumber = value => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  };
+
+  const normalizeAvailableItem = item => {
+    const currentQuantity = Number(item.current_quantity);
+    const hasCurrentQuantity = item.current_quantity !== undefined &&
+      item.current_quantity !== null &&
+      item.current_quantity !== '' &&
+      Number.isFinite(currentQuantity);
+    const fallbackQuantity = Math.max(
+      toFiniteNumber(item.total_quantity) - toFiniteNumber(item.reserved_quantity) - toFiniteNumber(item.lent_quantity),
+      0
+    );
+    return {
+      ...item,
+      total_quantity: toFiniteNumber(item.total_quantity),
+      reserved_quantity: toFiniteNumber(item.reserved_quantity),
+      lent_quantity: toFiniteNumber(item.lent_quantity),
+      current_quantity: hasCurrentQuantity ? currentQuantity : fallbackQuantity,
+    };
+  };
+
+  const readCachedItems = () => {
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(ITEM_CACHE_KEY) || 'null');
+      if (!cached || Date.now() - cached.savedAt > ITEM_CACHE_TTL_MS || !Array.isArray(cached.items)) return [];
+      return cached.items;
+    } catch (error) {
+      return [];
+    }
+  };
+
+  const writeCachedItems = items => {
+    try {
+      sessionStorage.setItem(ITEM_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), items }));
+    } catch (error) {
+      // 容量制限などで失敗しても、通常のAPI取得結果を表示できればよい。
+    }
+  };
+
+  const applyItems = items => {
+    allItems = items.map(normalizeAvailableItem).filter(item => item.current_quantity > 0);
+    stockMap.clear();
+    itemMap.clear();
+    allItems.forEach(item => {
+      stockMap.set(String(item.id), item.current_quantity);
+      itemMap.set(String(item.id), item);
+    });
+    itemsLoaded = true;
+    buildCats();
+    if (!pickerModal.hidden) {
+      renderList();
+    }
+  };
+
+  const loadLoanRequests = async () => {
+    if (loanRequestsLoaded) return loanRequests;
+    if (!loanRequestsPromise) {
+      loanRequestsPromise = Api.getRequests()
+        .then(requestsRes => {
+          if (requestsRes.error) {
+            showToast('申請取得エラー: ' + requestsRes.error);
+            return [];
+          }
+          return requestsRes.requests || [];
+        })
+        .catch(error => {
+          showToast('申請の取得に失敗: ' + (error.message || error));
+          return [];
+        })
+        .then(requests => {
+          loanRequests = requests;
+          loanRequestsLoaded = true;
+          loanRequestsPromise = null;
+          return loanRequests;
+        });
+    }
+    return loanRequestsPromise;
+  };
+
+  const selectedItemsNeedOrganizationLimit = () =>
+    organizationInput.value.trim() &&
+    [...selectedLoanItems.values()].some(({ item }) => Number(item.organization_quantity_limit) > 0);
 
   const getOrganizationAllocatedQuantity = (itemId, organization) => {
     const item = itemMap.get(String(itemId));
@@ -252,8 +342,11 @@
     });
   };
 
-  const addLoanItemSelection = (item, quantity) => {
+  const addLoanItemSelection = async (item, quantity) => {
     const normalizedQuantity = Number(quantity);
+    if (organizationInput.value.trim() && Number(item.organization_quantity_limit) > 0) {
+      await loadLoanRequests();
+    }
     const max = getLoanItemQuantityLimit(item.id);
     if (!normalizedQuantity || normalizedQuantity < 1) {
       showToast('追加する個数を入力してください');
@@ -302,19 +395,19 @@
       `;
     }).join('');
     pickerList.querySelectorAll('.picker-add').forEach(button => {
-      button.addEventListener('click', () => {
+      button.addEventListener('click', async () => {
         const id = button.dataset.addId;
         const item = allItems.find(candidate => String(candidate.id) === id);
         const qtyInput = button.closest('.picker-item')?.querySelector('.picker-qty');
-        if (item) addLoanItemSelection(item, qtyInput ? qtyInput.value : 1);
+        if (item) await addLoanItemSelection(item, qtyInput ? qtyInput.value : 1);
       });
     });
     pickerList.querySelectorAll('.picker-qty').forEach(input => {
-      input.addEventListener('keydown', event => {
+      input.addEventListener('keydown', async event => {
         if (event.key !== 'Enter') return;
         event.preventDefault();
         const item = allItems.find(candidate => String(candidate.id) === String(input.dataset.qtyId));
-        if (item) addLoanItemSelection(item, input.value);
+        if (item) await addLoanItemSelection(item, input.value);
       });
     });
   };
@@ -385,45 +478,49 @@
     renderSelectedLoanItems();
     validateLoanSelections();
     if (!pickerModal.hidden) renderList();
+    if (selectedItemsNeedOrganizationLimit()) {
+      loadLoanRequests().then(() => {
+        renderSelectedLoanItems();
+        validateLoanSelections();
+        if (!pickerModal.hidden) renderList();
+      });
+    }
   });
 
+  const cachedItems = readCachedItems();
+  if (cachedItems.length) {
+    applyItems(cachedItems);
+  }
+
   try {
-    const [itemsRes, storageLocationsRes, requestsRes] = await Promise.all([
-      Api.getItems(),
-      Api.getStorageLocations(),
-      Api.getRequests(),
-    ]);
+    const itemsRes = await Api.getItems();
     if (itemsRes.error) {
       showToast('物品取得エラー: ' + itemsRes.error);
     }
-    if (storageLocationsRes.error) {
-      showToast('保管場所取得エラー: ' + storageLocationsRes.error);
-    }
-    if (requestsRes.error) {
-      showToast('申請取得エラー: ' + requestsRes.error);
-    }
     const items = itemsRes.items || [];
-    loanRequests = requestsRes.requests || [];
-    allItems = items.filter(i => i.current_quantity > 0);
-    allItems.forEach(i => {
-      stockMap.set(String(i.id), i.current_quantity);
-      itemMap.set(String(i.id), i);
-    });
-    const storageLocations = uniqueNonEmptyValues([
-      ...(storageLocationsRes.storage_locations || []),
-      ...items.map(i => i.storage_location),
-    ]);
-    purchaseStorageLocationSelect.innerHTML = `
-      <option value="">選択してください</option>
-      ${storageLocations.map(location => `<option>${escape(location)}</option>`).join('')}
-      <option value="__new">＋ 新しい保管場所</option>
-    `;
-    syncPurchaseStorageLocationField();
-    itemsLoaded = true;
-    buildCats();
-    if (!pickerModal.hidden) {
-      renderList();
-    }
+    writeCachedItems(items);
+    applyItems(items);
+
+    Api.getStorageLocations()
+      .then(storageLocationsRes => {
+        if (storageLocationsRes.error) {
+          showToast('保管場所取得エラー: ' + storageLocationsRes.error);
+          return;
+        }
+        const storageLocations = uniqueNonEmptyValues([
+          ...(storageLocationsRes.storage_locations || []),
+          ...items.map(item => item.storage_location),
+        ]);
+        purchaseStorageLocationSelect.innerHTML = `
+          <option value="">選択してください</option>
+          ${storageLocations.map(location => `<option>${escape(location)}</option>`).join('')}
+          <option value="__new">＋ 新しい保管場所</option>
+        `;
+        syncPurchaseStorageLocationField();
+      })
+      .catch(error => {
+        showToast('保管場所の取得に失敗: ' + (error.message || error));
+      });
   } catch (error) {
     itemsLoaded = true;
     showToast('物品の取得に失敗: ' + (error.message || error));
@@ -439,6 +536,9 @@
       if (!selectedLoanItems.size) {
         showToast('物品を1つ以上追加してください');
         return;
+      }
+      if (selectedItemsNeedOrganizationLimit()) {
+        await loadLoanRequests();
       }
       if (!validateLoanSelections()) return;
     }
