@@ -30,14 +30,15 @@
 
       <section id="loanFields">
         <label>物品<span class="req">*</span></label>
-        <button type="button" class="item-picker-btn" id="itemPickerBtn">
-          <span class="ph">物品を選択してください</span>
-          <span class="arrow">▼</span>
-        </button>
-        <input type="hidden" name="item_id" id="itemIdInput" />
-
-        <label>個数<span class="req">*</span></label>
-        <input name="quantity" type="number" min="1" inputmode="numeric" placeholder="例) 10" />
+        <div class="item-picker-control">
+          <button type="button" class="item-picker-btn" id="itemPickerBtn">
+            <span class="ph">物品を選択・追加してください</span>
+            <span class="arrow">▼</span>
+          </button>
+        </div>
+        <div class="selected-loan-items" id="selectedLoanItems">
+          <div class="selected-loan-empty">まだ物品が追加されていません</div>
+        </div>
         <div class="err" id="qtyErr" hidden></div>
 
         <label>用途<span class="req">*</span></label>
@@ -94,7 +95,7 @@
 
   <div class="picker-modal" id="pickerModal" hidden style="display:none">
     <div class="picker-header">
-      <h2>物品を選択</h2>
+      <h2 id="pickerTitle">物品を選択</h2>
       <button type="button" class="picker-close" id="pickerClose">×</button>
     </div>
     <div class="picker-search">

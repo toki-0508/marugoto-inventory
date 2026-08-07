@@ -13,12 +13,13 @@
   const switchButtons = [...requestSwitch.querySelectorAll('.request-switch-btn')];
 
   const pickerBtn = document.getElementById('itemPickerBtn');
+  const selectedLoanItemsEl = document.getElementById('selectedLoanItems');
   const pickerModal = document.getElementById('pickerModal');
+  const pickerTitle = document.getElementById('pickerTitle');
   const pickerClose = document.getElementById('pickerClose');
   const pickerSearch = document.getElementById('pickerSearch');
   const pickerCats = document.getElementById('pickerCats');
   const pickerList = document.getElementById('pickerList');
-  const itemIdInput = document.getElementById('itemIdInput');
 
   const purchaseImageFile = document.getElementById('purchaseImageFile');
   const purchaseImagePreview = document.getElementById('purchaseImagePreview');
@@ -128,14 +129,12 @@
     });
     loanFields.hidden = requestType !== 'loan';
     purchaseFields.hidden = requestType !== 'purchase';
-    form.quantity.required = requestType === 'loan';
     form.purpose.required = requestType === 'loan';
     form.purchase_name.required = requestType === 'purchase';
     form.purchase_item_type.required = requestType === 'purchase';
     form.purchase_quantity.required = requestType === 'purchase';
     submitBtn.textContent = requestType === 'purchase' ? 'この内容で購入申請する' : 'この内容で申請する';
     qtyErr.hidden = true;
-    form.quantity.classList.remove('invalid');
   };
 
   switchButtons.forEach(button => {
@@ -146,6 +145,8 @@
   let curCat = '';
   let curItemType = '';
   let loanRequests = [];
+  let itemsLoaded = false;
+  const selectedLoanItems = new Map();
   const stockMap = new Map();
   const itemMap = new Map();
   const organizationInput = form.organization;
@@ -175,6 +176,99 @@
     }, 0);
   };
 
+  const getLoanItemQuantityLimit = itemId => {
+    const item = itemMap.get(String(itemId));
+    if (!item) return 0;
+    const stockMax = Number(stockMap.get(String(itemId))) || 0;
+    const organizationLimit = Number(item.organization_quantity_limit) || 0;
+    const organization = organizationInput.value.trim();
+    if (organizationLimit <= 0 || !organization) return stockMax;
+    const allocated = getOrganizationAllocatedQuantity(itemId, organization);
+    return Math.min(stockMax, Math.max(organizationLimit - allocated, 0));
+  };
+
+  const validateLoanSelections = () => {
+    if (requestType !== 'loan') {
+      qtyErr.hidden = true;
+      return true;
+    }
+    for (const { item, quantity } of selectedLoanItems.values()) {
+      const max = getLoanItemQuantityLimit(item.id);
+      if (!quantity || quantity < 1) {
+        qtyErr.textContent = `${item.name} の個数を入力してください`;
+        qtyErr.hidden = false;
+        return false;
+      }
+      if (quantity > max) {
+        qtyErr.textContent = `${item.name} は最大 ${max} 個まで申請できます`;
+        qtyErr.hidden = false;
+        return false;
+      }
+    }
+    qtyErr.hidden = true;
+    return true;
+  };
+
+  const renderSelectedLoanItems = () => {
+    const selections = [...selectedLoanItems.values()];
+    if (!selections.length) {
+      selectedLoanItemsEl.innerHTML = '<div class="selected-loan-empty">まだ物品が追加されていません</div>';
+      return;
+    }
+    selectedLoanItemsEl.innerHTML = selections.map(({ item, quantity }) => {
+      const max = getLoanItemQuantityLimit(item.id);
+      const isInvalid = !quantity || quantity < 1 || quantity > max;
+      return `
+        <div class="selected-loan-item ${isInvalid ? 'invalid' : ''}" data-id="${item.id}">
+          <div class="thumb">${
+            item.image ? `<img src="${item.image}" alt="">` : pickIcon(item.name, item.category)
+          }</div>
+          <div class="selected-loan-info">
+            <div class="nm">${escape(item.name)}</div>
+            <div class="ct">在庫 ${item.current_quantity}${max !== item.current_quantity ? ` / 申請可能 ${max}` : ''}</div>
+          </div>
+          <input class="selected-loan-qty" data-qty-id="${item.id}" type="number" min="1" max="${max}" value="${quantity}" inputmode="numeric" aria-label="${escape(item.name)}の個数" />
+          <button type="button" class="selected-loan-remove" data-remove-id="${item.id}" aria-label="${escape(item.name)}を取り消す">×</button>
+        </div>
+      `;
+    }).join('');
+    selectedLoanItemsEl.querySelectorAll('.selected-loan-qty').forEach(input => {
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Enter') event.preventDefault();
+      });
+      input.addEventListener('input', () => {
+        const selected = selectedLoanItems.get(String(input.dataset.qtyId));
+        if (!selected) return;
+        selected.quantity = Number(input.value);
+        validateLoanSelections();
+      });
+    });
+    selectedLoanItemsEl.querySelectorAll('.selected-loan-remove').forEach(button => {
+      button.addEventListener('click', () => {
+        selectedLoanItems.delete(String(button.dataset.removeId));
+        renderSelectedLoanItems();
+        validateLoanSelections();
+      });
+    });
+  };
+
+  const addLoanItemSelection = (item, quantity) => {
+    const normalizedQuantity = Number(quantity);
+    const max = getLoanItemQuantityLimit(item.id);
+    if (!normalizedQuantity || normalizedQuantity < 1) {
+      showToast('追加する個数を入力してください');
+      return;
+    }
+    if (normalizedQuantity > max) {
+      showToast(`${item.name} は最大 ${max} 個までです`);
+      return;
+    }
+    selectedLoanItems.set(String(item.id), { item, quantity: normalizedQuantity });
+    renderSelectedLoanItems();
+    renderList();
+    validateLoanSelections();
+  };
+
   const renderList = () => {
     const q = pickerSearch.value.trim();
     const filtered = allItems.filter(i =>
@@ -186,39 +280,43 @@
       pickerList.innerHTML = '<div class="empty">該当する物品がありません</div>';
       return;
     }
-    pickerList.innerHTML = filtered.map(i => `
-      <div class="picker-item" data-id="${i.id}">
-        <div class="thumb">${
-          i.image ? `<img src="${i.image}" alt="">` : pickIcon(i.name, i.category)
-        }</div>
-        <div class="info">
-          <div class="nm">${escape(i.name)}</div>
-          <div class="ct">${escape(i.category || '-')}</div>
-          ${i.aliases ? `<div class="ct">別名: ${escape(ItemSearch.formatAliases(i.aliases))}</div>` : ''}
+    pickerList.innerHTML = filtered.map(i => {
+      const max = getLoanItemQuantityLimit(i.id);
+      const selected = selectedLoanItems.get(String(i.id));
+      return `
+        <div class="picker-item" data-id="${i.id}">
+          <div class="thumb">${
+            i.image ? `<img src="${i.image}" alt="">` : pickIcon(i.name, i.category)
+          }</div>
+          <div class="info">
+            <div class="nm">${escape(i.name)}</div>
+            <div class="ct">${escape(i.category || '-')}</div>
+            ${i.aliases ? `<div class="ct">別名: ${escape(ItemSearch.formatAliases(i.aliases))}</div>` : ''}
+          </div>
+          <div class="picker-item-actions">
+            <div class="stk">在庫 ${i.current_quantity}</div>
+            <input class="picker-qty" data-qty-id="${i.id}" type="number" min="1" max="${max}" value="${selected?.quantity || 1}" inputmode="numeric" aria-label="${escape(i.name)}の個数" ${max <= 0 ? 'disabled' : ''} />
+            <button type="button" class="picker-add" data-add-id="${i.id}" ${max <= 0 ? 'disabled' : ''}>${selected ? '更新' : '追加'}</button>
+          </div>
         </div>
-        <div class="stk">在庫 ${i.current_quantity}</div>
-      </div>
-    `).join('');
-    pickerList.querySelectorAll('.picker-item').forEach(el =>
-      el.addEventListener('click', () => {
-        const id = el.dataset.id;
-        const item = allItems.find(x => String(x.id) === id);
-        if (item) selectItem(item);
-      })
-    );
-  };
-
-  const selectItem = item => {
-    itemIdInput.value = item.id;
-    pickerBtn.innerHTML = `
-      <span class="thumb">${
-        item.image ? `<img src="${item.image}" alt="">` : pickIcon(item.name, item.category)
-      }</span>
-      <span class="label">${escape(item.name)}（在庫 ${item.current_quantity}）</span>
-      <span class="arrow">▼</span>
-    `;
-    hidePicker();
-    validateQty();
+      `;
+    }).join('');
+    pickerList.querySelectorAll('.picker-add').forEach(button => {
+      button.addEventListener('click', () => {
+        const id = button.dataset.addId;
+        const item = allItems.find(candidate => String(candidate.id) === id);
+        const qtyInput = button.closest('.picker-item')?.querySelector('.picker-qty');
+        if (item) addLoanItemSelection(item, qtyInput ? qtyInput.value : 1);
+      });
+    });
+    pickerList.querySelectorAll('.picker-qty').forEach(input => {
+      input.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        const item = allItems.find(candidate => String(candidate.id) === String(input.dataset.qtyId));
+        if (item) addLoanItemSelection(item, input.value);
+      });
+    });
   };
 
   const buildCats = () => {
@@ -260,69 +358,34 @@
     pickerModal.hidden = true;
     pickerModal.style.display = 'none';
   };
-
-  pickerBtn.addEventListener('click', () => {
+  const showLoanItemList = () => {
+    pickerTitle.textContent = '物品を選択';
     pickerSearch.value = '';
     curCat = '';
     curItemType = '';
     pickerCats.querySelectorAll('.pill[data-cat]').forEach((p, i) => p.classList.toggle('active', i === 0));
     pickerCats.querySelectorAll('.pill[data-type]').forEach((p, i) => p.classList.toggle('active', i === 0));
     showPicker();
-    if (!allItems.length) {
+    if (!itemsLoaded) {
+      pickerList.innerHTML = '<div class="loading">読み込み中…</div>';
+    } else if (!allItems.length) {
       pickerList.innerHTML = '<div class="empty">利用可能な物品がありません<br><span style="font-size:12px">(在庫 > 0 の物品を管理者が追加してください)</span></div>';
     } else {
       renderList();
     }
     setTimeout(() => pickerSearch.focus(), 50);
+  };
+
+  pickerBtn.addEventListener('click', () => {
+    showLoanItemList();
   });
   pickerClose.addEventListener('click', hidePicker);
   pickerSearch.addEventListener('input', renderList);
-
-  const validateQty = () => {
-    if (requestType !== 'loan') {
-      qtyErr.hidden = true;
-      form.quantity.classList.remove('invalid');
-      return true;
-    }
-    const itemId = itemIdInput.value;
-    const qty = Number(form.quantity.value);
-    if (!itemId || !qty) {
-      form.quantity.classList.remove('invalid');
-      qtyErr.hidden = true;
-      return true;
-    }
-    const item = itemMap.get(String(itemId));
-    const stockMax = stockMap.get(itemId);
-    let limitMax = Infinity;
-    let limitMessage = '';
-    const organizationLimit = Number(item?.organization_quantity_limit) || 0;
-    const organization = organizationInput.value.trim();
-    if (organizationLimit > 0 && organization) {
-      const allocated = getOrganizationAllocatedQuantity(itemId, organization);
-      limitMax = Math.max(organizationLimit - allocated, 0);
-      limitMessage = `団体上限は残り ${limitMax} 個です`;
-    }
-    const max = Math.min(stockMax, limitMax);
-    if (max <= 0 && organizationLimit > 0 && organization) {
-      qtyErr.textContent = limitMessage;
-      qtyErr.hidden = false;
-      form.quantity.classList.add('invalid');
-      return false;
-    }
-    if (qty > max) {
-      qtyErr.textContent = max === stockMax || !isFinite(limitMax)
-        ? `在庫を超えています（最大 ${stockMax}）`
-        : `${limitMessage}（在庫上限 ${stockMax}）`;
-      qtyErr.hidden = false;
-      form.quantity.classList.add('invalid');
-      return false;
-    }
-    qtyErr.hidden = true;
-    form.quantity.classList.remove('invalid');
-    return true;
-  };
-  form.quantity.addEventListener('input', validateQty);
-  form.organization.addEventListener('input', validateQty);
+  form.organization.addEventListener('input', () => {
+    renderSelectedLoanItems();
+    validateLoanSelections();
+    if (!pickerModal.hidden) renderList();
+  });
 
   try {
     const [itemsRes, storageLocationsRes, requestsRes] = await Promise.all([
@@ -356,20 +419,28 @@
       <option value="__new">＋ 新しい保管場所</option>
     `;
     syncPurchaseStorageLocationField();
+    itemsLoaded = true;
     buildCats();
+    if (!pickerModal.hidden) {
+      renderList();
+    }
   } catch (error) {
+    itemsLoaded = true;
     showToast('物品の取得に失敗: ' + (error.message || error));
+    if (!pickerModal.hidden) {
+      pickerList.innerHTML = '<div class="empty">物品の取得に失敗しました</div>';
+    }
   }
 
   form.addEventListener('submit', async e => {
     e.preventDefault();
 
     if (requestType === 'loan') {
-      if (!itemIdInput.value) {
-        showToast('物品を選択してください');
+      if (!selectedLoanItems.size) {
+        showToast('物品を1つ以上追加してください');
         return;
       }
-      if (!validateQty()) return;
+      if (!validateLoanSelections()) return;
     }
 
     const basePayload = {
@@ -391,16 +462,11 @@
           purchase_note: form.purchase_note.value.trim(),
           purchase_image: purchaseImageDataUrl,
         }
-      : {
-          ...basePayload,
-          item_id: Number(itemIdInput.value),
-          quantity: Number(form.quantity.value),
-          purpose: form.purpose.value.trim(),
-        };
+      : null;
 
     const isInvalid = requestType === 'purchase'
       ? (!payload.purchase_name || !payload.purchase_item_type || !payload.purchase_quantity || !payload.organization || !payload.user_name || !payload.email)
-      : (!payload.item_id || !payload.quantity || !payload.organization || !payload.user_name || !payload.email || !payload.purpose);
+      : (!basePayload.organization || !basePayload.user_name || !basePayload.email || !form.purpose.value.trim());
     if (isInvalid) {
       showToast('必須項目を入力してください');
       return;
@@ -408,11 +474,29 @@
 
     submitBtn.disabled = true;
     submitBtn.textContent = requestType === 'purchase' ? '送信中…' : '申請中…';
-    const result = await Api.addRequest(payload);
+    let result = null;
+    let submittedCount = 0;
+    if (requestType === 'purchase') {
+      result = await Api.addRequest(payload);
+    } else {
+      const purpose = form.purpose.value.trim();
+      for (const { item, quantity } of selectedLoanItems.values()) {
+        result = await Api.addRequest({
+          ...basePayload,
+          item_id: Number(item.id),
+          quantity,
+          purpose,
+        });
+        if (result.error) break;
+        submittedCount += 1;
+      }
+    }
     submitBtn.disabled = false;
     submitBtn.textContent = requestType === 'purchase' ? 'この内容で購入申請する' : 'この内容で申請する';
     if (result.error) {
-      showToast('エラー: ' + result.error);
+      showToast(submittedCount
+        ? `一部申請済みです（${submittedCount}件成功）: ${result.error}`
+        : 'エラー: ' + result.error);
       return;
     }
 
@@ -421,7 +505,7 @@
       : '申請を受け付けました';
     done.querySelector('p').innerHTML = requestType === 'purchase'
       ? '申請内容は管理者が確認後、<br>物品一覧へ反映します。'
-      : '申請内容は管理者が確認後、<br>順次対応いたします。';
+      : `${selectedLoanItems.size}件の申請内容は管理者が確認後、<br>順次対応いたします。`;
 
     form.hidden = true;
     done.hidden = false;
@@ -430,15 +514,11 @@
 
   document.getElementById('again').addEventListener('click', () => {
     form.reset();
-    itemIdInput.value = '';
-    pickerBtn.innerHTML = `
-      <span class="ph">物品を選択してください</span>
-      <span class="arrow">▼</span>
-    `;
+    selectedLoanItems.clear();
+    renderSelectedLoanItems();
     setPurchasePreview('');
     syncPurchaseStorageLocationField();
     qtyErr.hidden = true;
-    form.quantity.classList.remove('invalid');
     updateMode('loan');
     form.hidden = false;
     done.hidden = true;
