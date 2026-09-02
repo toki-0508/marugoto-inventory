@@ -34,12 +34,13 @@ const TX_SHEET = 'transactions';
 const REQ_SHEET = 'requests';
 const STORAGE_LOCATIONS_SHEET = 'storage_locations';
 const ACTIVE_RESERVATION_STATUSES = { pending: true, ready: true };
-const ITEM_TYPE_LABELS = { equipment: '物品', consumable: '消耗品' };
+const ITEM_TYPE_LABELS = { equipment: '物品', electronics: '電子機器', consumable: '消耗品' };
 
 function _normalizeItemType(value) {
   const raw = String(value || '').trim();
   if (!raw) return 'equipment';
   if (raw === 'consumable' || raw === '消耗品') return 'consumable';
+  if (raw === 'electronics' || raw === '電子機器') return 'electronics';
   if (raw === 'equipment' || raw === '物品') return 'equipment';
   return 'equipment';
 }

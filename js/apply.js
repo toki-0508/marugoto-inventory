@@ -30,6 +30,15 @@
   let purchaseImageDataUrl = '';
   const ITEM_CACHE_KEY = 'marugoto_apply_items_cache_v1';
   const ITEM_CACHE_TTL_MS = 60 * 1000;
+  const ITEM_TYPE_OPTIONS = [
+    { value: 'equipment', label: '物品' },
+    { value: 'electronics', label: '電子機器' },
+    { value: 'consumable', label: '消耗品' },
+  ];
+  const normalizeItemType = value => {
+    const raw = String(value || '').trim();
+    return (ITEM_TYPE_OPTIONS.find(option => option.value === raw || option.label === raw) || ITEM_TYPE_OPTIONS[0]).value;
+  };
   const uniqueNonEmptyValues = values => [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))];
   const bindSelectableField = (select, newInput) => {
     if (!select || !newInput) return () => {};
@@ -188,6 +197,7 @@
       total_quantity: toFiniteNumber(item.total_quantity),
       reserved_quantity: toFiniteNumber(item.reserved_quantity),
       lent_quantity: toFiniteNumber(item.lent_quantity),
+      item_type: normalizeItemType(item.item_type),
       current_quantity: hasCurrentQuantity ? currentQuantity : fallbackQuantity,
     };
   };
@@ -417,8 +427,7 @@
     pickerCats.innerHTML =
       `<div class="picker-type-row">
         <button type="button" class="pill active" data-type="">すべて</button>
-        <button type="button" class="pill" data-type="equipment">物品</button>
-        <button type="button" class="pill" data-type="consumable">消耗品</button>
+        ${ITEM_TYPE_OPTIONS.map(option => `<button type="button" class="pill" data-type="${option.value}">${option.label}</button>`).join('')}
       </div>` +
       `<button type="button" class="pill active" data-cat="">すべて</button>` +
       cats.map(c => `<button type="button" class="pill" data-cat="${escape(c)}">${escape(c)}</button>`).join('');

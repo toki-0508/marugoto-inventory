@@ -39,15 +39,31 @@ const requestDisplayQuantity = request => Number(
     ? (request.approved_quantity || request.quantity || 0)
     : (request.quantity || 0)
 );
-const getItemType = item => item?.item_type === 'consumable' ? 'consumable' : 'equipment';
-const getItemTypeLabel = item => getItemType(item) === 'consumable' ? '消耗品' : '物品';
+const ITEM_TYPE_OPTIONS = [
+  { value: 'equipment', label: '物品' },
+  { value: 'electronics', label: '電子機器' },
+  { value: 'consumable', label: '消耗品' },
+];
+const ITEM_TYPE_LABELS = Object.fromEntries(ITEM_TYPE_OPTIONS.map(option => [option.value, option.label]));
+const normalizeItemType = value => {
+  const raw = String(value || '').trim();
+  return (ITEM_TYPE_OPTIONS.find(option => option.value === raw || option.label === raw) || ITEM_TYPE_OPTIONS[0]).value;
+};
+const getItemType = item => normalizeItemType(item?.item_type);
+const getItemTypeLabel = item => ITEM_TYPE_LABELS[getItemType(item)] || ITEM_TYPE_LABELS.equipment;
 const getRequestItemType = request => {
   if (isPurchaseRequest(request)) {
-    return request.approved_item_type || request.purchase_item_type || 'equipment';
+    return normalizeItemType(request.approved_item_type || request.purchase_item_type);
   }
-  return request.item_type || 'equipment';
+  return normalizeItemType(request.item_type);
 };
-const getRequestItemTypeLabel = request => getRequestItemType(request) === 'consumable' ? '消耗品' : '物品';
+const getRequestItemTypeLabel = request => ITEM_TYPE_LABELS[getRequestItemType(request)] || ITEM_TYPE_LABELS.equipment;
+const itemTypeOptionsHtml = selectedValue => {
+  const normalizedSelectedValue = selectedValue ? normalizeItemType(selectedValue) : '';
+  return ITEM_TYPE_OPTIONS
+    .map(option => `<option value="${option.value}" ${normalizedSelectedValue === option.value ? 'selected' : ''}>${option.label}</option>`)
+    .join('');
+};
 const uniqueNonEmptyValues = values => [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))];
 const buildSelectableOptions = (values, currentValue = '') => {
   const options = uniqueNonEmptyValues(values);
@@ -238,8 +254,7 @@ routes.home = async () => {
       <select id="cat"><option value="">すべてのカテゴリ</option></select>
       <select id="itemType">
         <option value="">すべての種別</option>
-        <option value="equipment">物品</option>
-        <option value="consumable">消耗品</option>
+        ${itemTypeOptionsHtml('')}
       </select>
     </div>
     <div id="list"><div class="loading">読み込み中…</div></div>
@@ -718,8 +733,7 @@ routes.approvePurchase = async ({ id }) => {
 
       <label>種別<span class="req">*</span></label>
       <select name="item_type" required>
-        <option value="equipment" ${approvedDraft.item_type === 'equipment' ? 'selected' : ''}>物品</option>
-        <option value="consumable" ${approvedDraft.item_type === 'consumable' ? 'selected' : ''}>消耗品</option>
+        ${itemTypeOptionsHtml(approvedDraft.item_type)}
       </select>
 
       <label>総数<span class="req">*</span></label>
@@ -880,8 +894,7 @@ routes.add = async () => {
 
       <label>種別<span class="req">*</span></label>
       <select name="item_type" required>
-        <option value="equipment">物品</option>
-        <option value="consumable">消耗品</option>
+        ${itemTypeOptionsHtml('equipment')}
       </select>
 
       <label>総数<span class="req">*</span></label>
@@ -1027,8 +1040,7 @@ routes.editItem = async ({ id }) => {
 
       <label>種別<span class="req">*</span></label>
       <select name="item_type" required>
-        <option value="equipment" ${getItemType(item) === 'equipment' ? 'selected' : ''}>物品</option>
-        <option value="consumable" ${getItemType(item) === 'consumable' ? 'selected' : ''}>消耗品</option>
+        ${itemTypeOptionsHtml(getItemType(item))}
       </select>
 
       <label>総数<span class="req">*</span></label>

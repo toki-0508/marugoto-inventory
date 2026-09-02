@@ -10,6 +10,7 @@ const Mock = (() => {
     const raw = String(value || '').trim();
     if (!raw) return 'equipment';
     if (raw === 'consumable' || raw === '消耗品') return 'consumable';
+    if (raw === 'electronics' || raw === '電子機器') return 'electronics';
     if (raw === 'equipment' || raw === '物品') return 'equipment';
     return 'equipment';
   };
