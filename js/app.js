@@ -6,7 +6,69 @@ const back  = document.getElementById('backBtn');
 const tabs  = document.querySelectorAll('.tabbar .tab');
 const toast = document.getElementById('toast');
 
-const State = { items: [], storageLocations: [] };
+const CACHE_TTL_MS = 60 * 1000;
+const State = {
+  items: [],
+  itemsLoadedAt: 0,
+  itemsPromise: null,
+  requests: [],
+  requestsLoadedAt: 0,
+  requestsPromise: null,
+  storageLocations: [],
+};
+
+const isCacheFresh = loadedAt => loadedAt > 0 && Date.now() - loadedAt < CACHE_TTL_MS;
+
+const loadItems = ({ force = false } = {}) => {
+  if (!force && isCacheFresh(State.itemsLoadedAt)) return Promise.resolve(State.items);
+  if (State.itemsPromise) return State.itemsPromise;
+
+  State.itemsPromise = Api.getItems()
+    .then(({ items = [], error }) => {
+      if (error) throw new Error(error);
+      State.items = items;
+      State.itemsLoadedAt = Date.now();
+      return State.items;
+    })
+    .finally(() => { State.itemsPromise = null; });
+  return State.itemsPromise;
+};
+
+const loadRequests = ({ force = false } = {}) => {
+  if (!force && isCacheFresh(State.requestsLoadedAt)) return Promise.resolve(State.requests);
+  if (State.requestsPromise) return State.requestsPromise;
+
+  State.requestsPromise = Api.getRequests()
+    .then(({ requests = [], error }) => {
+      if (error) throw new Error(error);
+      State.requests = requests;
+      State.requestsLoadedAt = Date.now();
+      return State.requests;
+    })
+    .finally(() => { State.requestsPromise = null; });
+  return State.requestsPromise;
+};
+
+const invalidateItems = () => {
+  State.items = [];
+  State.itemsLoadedAt = 0;
+};
+
+const invalidateRequests = () => {
+  State.requests = [];
+  State.requestsLoadedAt = 0;
+};
+
+const preloadRequests = () => {
+  const preload = () => loadRequests().catch(error => {
+    console.warn('申請一覧の先読みを完了できませんでした', error);
+  });
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(preload, { timeout: 1500 });
+  } else {
+    setTimeout(preload, 0);
+  }
+};
 
 const escape = s => String(s ?? '').replace(/[&<>"']/g, c => ({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
@@ -221,6 +283,7 @@ async function resizeImage(file, maxSize = 320, quality = 0.75) {
 
 // ---- Routing ----
 const routes = {};
+const currentRouteName = () => location.hash.replace(/^#/, '').split('?')[0] || 'home';
 const navigate = (name, params = {}) => {
   const h = routes[name];
   if (h) h(params);
@@ -261,9 +324,19 @@ routes.home = async () => {
     </div>
     <div id="list"><div class="loading">読み込み中…</div></div>
   `;
+  preloadRequests();
 
-  const { items = [] } = await Api.getItems();
-  State.items = items;
+  let items;
+  try {
+    items = await loadItems();
+  } catch (error) {
+    console.error('物品一覧の読み込みに失敗しました', error);
+    if (currentRouteName() === 'home') {
+      view.querySelector('#list').innerHTML = '<div class="empty">物品一覧の読み込みに失敗しました</div>';
+    }
+    return;
+  }
+  if (currentRouteName() !== 'home') return;
 
   const cats = [...new Set(items.map(i => i.category).filter(Boolean))];
   const catSel = view.querySelector('#cat');
@@ -407,7 +480,7 @@ routes.detail = async ({ id }) => {
     const r = await Api.deleteItem({ id: item.id });
     if (r.error) { showToast('エラー: ' + r.error); return; }
     showToast('削除しました');
-    State.items = [];
+    invalidateItems();
     go('home');
   });
 };
@@ -480,7 +553,17 @@ routes.requests = async () => {
     <div id="reqList"><div class="loading">読み込み中…</div></div>
   `;
 
-  const { requests = [] } = await Api.getRequests();
+  let requests;
+  try {
+    requests = await loadRequests();
+  } catch (error) {
+    console.error('申請一覧の読み込みに失敗しました', error);
+    if (currentRouteName() === 'requests') {
+      view.querySelector('#reqList').innerHTML = '<div class="empty">申請一覧の読み込みに失敗しました</div>';
+    }
+    return;
+  }
+  if (currentRouteName() !== 'requests') return;
   const list = view.querySelector('#reqList');
   let curStatus = '';
 
@@ -489,7 +572,7 @@ routes.requests = async () => {
     const so = view.querySelector('#sort').value;
     let filtered = requests.filter(r =>
       (!curStatus || r.status === curStatus) &&
-      (!q || r.organization.includes(q) || r.user_name.includes(q) || r.item_name.includes(q))
+      (!q || String(r.organization || '').includes(q) || String(r.user_name || '').includes(q) || String(requestDisplayName(r)).includes(q))
     );
     filtered.sort((a, b) => {
       if (so === 'old')    return new Date(a.created_at) - new Date(b.created_at);
@@ -546,10 +629,14 @@ routes.requests = async () => {
             res.mail_status === 'no_email' ? '（メール: 宛先なし）' :
             res.mail_status === 'failed'   ? '（メール失敗: ' + (res.mail_error || '') + '）' : ''
           ));
-          const { requests: fresh = [] } = await Api.getRequests();
-          requests.length = 0;
-          fresh.forEach(x => requests.push(x));
-          render();
+          invalidateItems();
+          invalidateRequests();
+          try {
+            requests = await loadRequests();
+            if (currentRouteName() === 'requests') render();
+          } catch (error) {
+            showToast('更新内容の再読み込みに失敗しました');
+          }
         });
       });
     });
@@ -664,7 +751,8 @@ routes.reqDetail = async ({ id }) => {
       if (res === null) return;
       if (res.error) { showToast('エラー: ' + res.error); return; }
       showToast(ACTION_LABEL[act] + ' しました');
-      State.items = [];
+      invalidateItems();
+      invalidateRequests();
       routes.reqDetail({ id: r.id });
     });
   });
@@ -678,10 +766,7 @@ routes.approvePurchase = async ({ id }) => {
   setTabActive('requests');
   view.innerHTML = `<div class="loading">読み込み中…</div>`;
 
-  if (!State.items.length) {
-    const { items = [] } = await Api.getItems();
-    State.items = items;
-  }
+  await loadItems();
   await ensureStorageLocations();
   const { request: requestData, error } = await Api.getRequestDetail(id);
   if (error || !requestData || !isPurchaseRequest(requestData)) {
@@ -848,7 +933,8 @@ routes.approvePurchase = async ({ id }) => {
       return;
     }
     showToast('物品一覧へ登録しました');
-    State.items = [];
+    invalidateItems();
+    invalidateRequests();
     State.storageLocations = [];
     go('reqDetail', { id: requestData.id });
   });
@@ -862,10 +948,7 @@ routes.add = async () => {
   setTabActive('add');
   view.innerHTML = `<div class="loading">読み込み中…</div>`;
 
-  if (!State.items.length) {
-    const { items = [] } = await Api.getItems();
-    State.items = items;
-  }
+  await loadItems();
   await ensureStorageLocations();
   const cats = buildSelectableOptions(State.items.map(i => i.category));
   const storageLocations = storageLocationOptions();
@@ -990,7 +1073,7 @@ routes.add = async () => {
     btn.disabled = false; btn.textContent = '追加する';
     if (r.error) { showToast('エラー: ' + r.error); return; }
     showToast('物品を追加しました');
-    State.items = [];
+    invalidateItems();
     State.storageLocations = [];
     go('home');
   });
@@ -1004,10 +1087,7 @@ routes.editItem = async ({ id }) => {
   setTabActive('home');
   view.innerHTML = `<div class="loading">読み込み中…</div>`;
 
-  if (!State.items.length) {
-    const { items = [] } = await Api.getItems();
-    State.items = items;
-  }
+  await loadItems();
   await ensureStorageLocations();
 
   const { item, error } = await Api.getItemDetail(id);
@@ -1138,7 +1218,7 @@ routes.editItem = async ({ id }) => {
     btn.disabled = false; btn.textContent = '更新する';
     if (r.error) { showToast('エラー: ' + r.error); return; }
     showToast('更新しました');
-    State.items = [];
+    invalidateItems();
     State.storageLocations = [];
     go('detail', { id: item.id });
   });
