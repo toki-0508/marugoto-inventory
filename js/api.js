@@ -310,7 +310,7 @@ const Mock = (() => {
         if (!it) return Promise.resolve({ error: 'not found' });
         const { lent, ret } = calcLending(it.id);
         const { reserved } = calcReserved(it.id);
-        const available = it.total_quantity - reserved - lent + ret;
+        const available = inventoryQuantities(it.total_quantity, reserved, lent, ret).current;
         quantity = Number(payload.quantity);
         if (!quantity || quantity > available) {
           return Promise.resolve({ error: `在庫不足です（利用可能 ${available}）` });

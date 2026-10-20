@@ -102,6 +102,16 @@ async function run() {
   const correctedListItem = (await Api.getItems()).items.find(item => item.id === inconsistentHistoryItem.id);
   assert.equal(correctedListItem.lent_quantity, 0);
   assert.equal(correctedListItem.current_quantity, 5);
+  const overstockRequest = await Api.addRequest({
+    request_type: 'loan',
+    item_id: inconsistentHistoryItem.id,
+    quantity: 6,
+    organization: 'テスト団体',
+    user_name: 'テスト利用者',
+    purpose: '在庫上限確認',
+    email: 'test@example.com',
+  });
+  assert.match(overstockRequest.error, /利用可能 5/);
 
   console.log('tracking tests passed');
 }

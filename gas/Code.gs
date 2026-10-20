@@ -975,7 +975,7 @@ function addRequest(p) {
     }
     const reservations = _getReservationMap();
     const reserved = reservations[item.id] ? reservations[item.id].reserved : 0;
-    const available = item.total_quantity - reserved - lent + ret;
+    const available = _inventoryQuantities(item.total_quantity, reserved, lent, ret).current;
     quantity = Number(p.quantity) || 0;
     if (!quantity || quantity > available) {
       return { error: '在庫不足です（利用可能 ' + available + '）' };
