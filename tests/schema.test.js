@@ -12,6 +12,7 @@ globalThis.SchemaTestApi = {
   ensureItemTypeColumn: _ensureItemTypeColumn,
   ensureSheetHeaders: _ensureSheetHeaders,
   backfillMissingItemCategories: _backfillMissingItemCategories,
+  migrateMisplacedItemCategories: _migrateMisplacedItemCategories,
   inventoryQuantities: _inventoryQuantities,
 };
 `, sandbox);
@@ -93,6 +94,7 @@ const {
   ensureItemTypeColumn,
   ensureSheetHeaders,
   backfillMissingItemCategories,
+  migrateMisplacedItemCategories,
   inventoryQuantities,
 } = sandbox.SchemaTestApi;
 
@@ -132,6 +134,25 @@ assert.deepEqual(
   ['生活用品', '電子機械', '消耗品', '独自カテゴリ']
 );
 assert.equal(backfillMissingItemCategories(missingCategories), 0, 'backfill must be idempotent');
+
+const misplacedCategories = new FakeSheet([
+  ['id', 'name', 'category', 'item_type'],
+  [1, '学校机', '生活用品', '学校備品'],
+  [2, '寮の備品', '', '寮'],
+  [3, '既存分類品', '独自カテゴリ', '旧カテゴリ'],
+  [4, 'PC', '電子機械', '電子機器'],
+]);
+assert.equal(migrateMisplacedItemCategories(misplacedCategories), 3);
+assert.deepEqual(
+  misplacedCategories.rows.slice(1).map(row => [row[2], row[3]]),
+  [
+    ['学校備品', '物品'],
+    ['寮', '物品'],
+    ['独自カテゴリ', '物品'],
+    ['電子機械', '電子機器'],
+  ]
+);
+assert.equal(migrateMisplacedItemCategories(misplacedCategories), 0, 'migration must be idempotent');
 
 assert.deepEqual(
   JSON.parse(JSON.stringify(inventoryQuantities(5, 0, 0, 4))),

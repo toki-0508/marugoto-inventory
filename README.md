@@ -45,6 +45,7 @@ gas/Code.gs             Apps Script バックエンド
 - 互換のため `equipment` / `electronics` / `consumable` でも動作する
 - `電子機器` は取扱注意品として分類するための種別で、貸出・返却の扱いは `物品` と同じ
 - `category` が空欄の既存行は `setupSheets()` 実行時に種別から `生活用品` / `電子機械` / `消耗品` を補完する
+- 旧シートでカテゴリ値が `item_type` にずれた行は、`setupSheets()` 実行時にカテゴリへ戻して種別を `物品` に補正する
 - `organization_quantity_limit` は任意。入力時は同一団体が同時に確保できる最大数として扱う
 - `aliases` は任意。カンマ区切りまたは改行区切りで複数登録できる
 - `tracking_enabled` は個体識別番号を使う物品のみ `TRUE`。番号は総数から自動生成される

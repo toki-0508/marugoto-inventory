@@ -106,7 +106,18 @@ const ITEM_TYPE_OPTIONS = [
   { value: 'electronics', label: '電子機器' },
   { value: 'consumable', label: '消耗品' },
 ];
-const DEFAULT_CATEGORY_OPTIONS = ['電子機械', '消耗品', '生活用品'];
+const DEFAULT_CATEGORY_OPTIONS = [
+  '電子機械',
+  '消耗品',
+  '生活用品',
+  '雑貨',
+  '工具',
+  '教具',
+  '楽器',
+  'カトラリー',
+  '学校備品',
+  '寮',
+];
 const ITEM_TYPE_LABELS = Object.fromEntries(ITEM_TYPE_OPTIONS.map(option => [option.value, option.label]));
 const normalizeItemType = value => {
   const raw = String(value || '').trim();
