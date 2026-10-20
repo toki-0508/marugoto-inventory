@@ -439,8 +439,32 @@ function _upsertStorageLocation(name) {
 
 function _syncStorageLocationsFromItems() {
   const itemLocations = _collectStorageLocationsFromItems();
-  for (let i = 0; i < itemLocations.length; i++) {
-    _upsertStorageLocation(itemLocations[i]);
+  if (!itemLocations.length) return;
+
+  const sheet = _sheet(STORAGE_LOCATIONS_SHEET);
+  const cols = _storageLocationColumns(sheet);
+  const values = sheet.getDataRange().getValues();
+  const existingNames = {};
+  let nextId = 1;
+  for (let i = 1; i < values.length; i++) {
+    const name = _normalizeStorageLocationName(_cell(values[i], cols.name, ''));
+    if (name) existingNames[name] = true;
+    nextId = Math.max(nextId, (Number(_cell(values[i], cols.id, 0)) || 0) + 1);
+  }
+
+  const rowWidth = Math.max(sheet.getLastColumn(), cols.id, cols.name, cols.created_at);
+  const rows = [];
+  itemLocations.forEach(location => {
+    if (existingNames[location]) return;
+    existingNames[location] = true;
+    const row = Array(rowWidth).fill('');
+    row[cols.id - 1] = nextId++;
+    row[cols.name - 1] = location;
+    row[cols.created_at - 1] = new Date();
+    rows.push(row);
+  });
+  if (rows.length) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rowWidth).setValues(rows);
   }
 }
 
