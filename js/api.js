@@ -100,14 +100,23 @@ const Mock = (() => {
       items: items.map(it => {
         const { lent, ret } = calcLending(it.id);
         const { reserved } = calcReserved(it.id);
+        const { image: _image, ...itemWithoutImage } = it;
         return {
-          ...it,
+          ...itemWithoutImage,
           current_quantity: it.total_quantity - reserved - lent + ret,
           reserved_quantity: reserved,
           lent_quantity: lent - ret,
         };
       })
     }),
+    getItemImages: ids => {
+      const requestedIds = new Set((ids || []).map(id => String(id)));
+      return Promise.resolve({
+        images: items
+          .filter(item => requestedIds.has(String(item.id)))
+          .map(item => ({ id: item.id, image: item.image || '' }))
+      });
+    },
     getItemDetail: id => {
       id = Number(id);
       const it = items.find(i => i.id === id);
@@ -355,6 +364,12 @@ const Api = {
   },
 
   getItems()        { return this._useMock() ? Mock.getItems()        : this._get('getItems'); },
+  getItemImages(ids) {
+    const normalizedIds = [...new Set((ids || []).map(id => String(id).trim()).filter(Boolean))].slice(0, 8);
+    return this._useMock()
+      ? Mock.getItemImages(normalizedIds)
+      : this._get('getItemImages', { ids: normalizedIds.join(',') });
+  },
   getItemDetail(id) { return this._useMock() ? Mock.getItemDetail(id) : this._get('getItemDetail', { id }); },
   getLogs()         { return this._useMock() ? Mock.getLogs()         : this._get('getLogs'); },
   getStorageLocations() { return this._useMock() ? Mock.getStorageLocations() : this._get('getStorageLocations'); },

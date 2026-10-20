@@ -273,7 +273,9 @@ routes.home = async () => {
   });
 
   const list = view.querySelector('#list');
+  let stopObservingImages = () => {};
   const render = () => {
+    stopObservingImages();
     const q = view.querySelector('#q').value.trim();
     const cat = catSel.value;
     const itemType = typeSel.value;
@@ -286,7 +288,7 @@ routes.home = async () => {
     list.innerHTML = filtered.map(i => `
       <div class="item-card" data-id="${i.id}">
         <div class="item-top">
-          <div class="item-icon">${
+          <div class="item-icon" ${i.image ? '' : `data-item-image="${escape(i.id)}"`}>${
             i.image ? `<img src="${i.image}" alt="">` : pickIcon(i.name, i.category)
           }</div>
           <div class="item-info">
@@ -309,6 +311,7 @@ routes.home = async () => {
     list.querySelectorAll('.item-card').forEach(c =>
       c.addEventListener('click', () => go('detail', { id: c.dataset.id }))
     );
+    stopObservingImages = ItemImages.observe(list, filtered);
   };
   view.querySelector('#q').addEventListener('input', render);
   catSel.addEventListener('change', render);

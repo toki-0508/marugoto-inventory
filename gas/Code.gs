@@ -50,6 +50,7 @@ function doGet(e) {
     const action = (e && e.parameter && e.parameter.action) || '';
     switch (action) {
       case 'getItems':      return getItems();
+      case 'getItemImages': return getItemImages(e.parameter.ids || '');
       case 'getItemDetail': return getItemDetail(Number(e.parameter.id));
       case 'getLogs':       return getLogs();
       case 'getStorageLocations': return getStorageLocations();
@@ -96,13 +97,47 @@ function _sheet(name) {
 
 // 既存 ID の最大値 + 1 を返す（行削除があっても衝突しない）
 function _nextId(sheet) {
-  const data = sheet.getDataRange().getValues();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 1;
+  const data = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
   let max = 0;
-  for (let i = 1; i < data.length; i++) {
+  for (let i = 0; i < data.length; i++) {
     const id = Number(data[i][0]);
     if (!isNaN(id) && id > max) max = id;
   }
   return max + 1;
+}
+
+// 画像の data URL は非常に大きいため、一覧系処理では対象列自体を読み込まない。
+function _getValuesExcludingColumns(sheet, excludedColumns) {
+  const rowCount = sheet.getLastRow();
+  const columnCount = sheet.getLastColumn();
+  if (!rowCount || !columnCount) return [];
+
+  const excluded = {};
+  (excludedColumns || []).forEach(column => {
+    if (column >= 1 && column <= columnCount) excluded[column] = true;
+  });
+
+  const values = Array.from({ length: rowCount }, () => Array(columnCount).fill(''));
+  let startColumn = 1;
+  while (startColumn <= columnCount) {
+    while (startColumn <= columnCount && excluded[startColumn]) startColumn++;
+    if (startColumn > columnCount) break;
+
+    let endColumn = startColumn;
+    while (endColumn + 1 <= columnCount && !excluded[endColumn + 1]) endColumn++;
+    const rangeValues = sheet
+      .getRange(1, startColumn, rowCount, endColumn - startColumn + 1)
+      .getValues();
+    for (let row = 0; row < rowCount; row++) {
+      for (let offset = 0; offset < rangeValues[row].length; offset++) {
+        values[row][startColumn - 1 + offset] = rangeValues[row][offset];
+      }
+    }
+    startColumn = endColumn + 1;
+  }
+  return values;
 }
 
 function _toIso(value) {
@@ -252,6 +287,10 @@ function _itemFromRow(row, cols) {
   };
 }
 
+function _getItemValuesWithoutImages(sheet, cols) {
+  return _getValuesExcludingColumns(sheet, [cols.image]);
+}
+
 function _requestHeaders() {
   return [
     'id', 'item_id', 'item_name', 'quantity', 'organization', 'user_name',
@@ -278,7 +317,7 @@ function _storageLocationColumns(sheet) {
 function _collectStorageLocationsFromItems() {
   const sheet = _sheet(ITEMS_SHEET);
   const cols = _itemColumns(sheet);
-  const values = sheet.getDataRange().getValues();
+  const values = _getItemValuesWithoutImages(sheet, cols);
   const locations = [];
   for (let i = 1; i < values.length; i++) {
     const name = _normalizeStorageLocationName(_cell(values[i], cols.storage_location, ''));
@@ -354,7 +393,7 @@ function _normalizeRequestRow(row) {
 }
 
 function _getRequestsData() {
-  const values = _sheet(REQ_SHEET).getDataRange().getValues();
+  const values = _getValuesExcludingColumns(_sheet(REQ_SHEET), [15, 25]);
   const list = [];
   for (let i = 1; i < values.length; i++) {
     if (!values[i][0]) continue;
@@ -474,7 +513,7 @@ function getStorageLocations() {
 function getItems() {
   const itemSheet = _sheet(ITEMS_SHEET);
   const itemCols = _itemColumns(itemSheet);
-  const items = itemSheet.getDataRange().getValues();
+  const items = _getItemValuesWithoutImages(itemSheet, itemCols);
   const tx    = _sheet(TX_SHEET).getDataRange().getValues();
   const reservations = _getReservationMap();
 
@@ -503,19 +542,53 @@ function getItems() {
   return { items: result };
 }
 
+function getItemImages(rawItemIds) {
+  const itemIds = String(rawItemIds || '')
+    .split(',')
+    .map(value => String(value).trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  if (!itemIds.length) return { images: [] };
+
+  const requestedIds = {};
+  itemIds.forEach(id => { requestedIds[id] = true; });
+
+  const sheet = _sheet(ITEMS_SHEET);
+  const cols = _itemColumns(sheet);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { images: [] };
+
+  const idValues = sheet.getRange(2, cols.id, lastRow - 1, 1).getValues();
+  const matchedRows = [];
+  for (let i = 0; i < idValues.length; i++) {
+    const id = String(idValues[i][0]);
+    if (requestedIds[id]) matchedRows.push({ id: idValues[i][0], row: i + 2 });
+  }
+
+  return {
+    images: matchedRows.map(match => ({
+      id: match.id,
+      image: sheet.getRange(match.row, cols.image).getValue() || ''
+    }))
+  };
+}
+
 function getItemDetail(itemId) {
   const itemSheet = _sheet(ITEMS_SHEET);
   const itemCols = _itemColumns(itemSheet);
-  const items = itemSheet.getDataRange().getValues();
+  const items = _getItemValuesWithoutImages(itemSheet, itemCols);
   let item = null;
+  let itemRow = -1;
   for (let i = 1; i < items.length; i++) {
     const candidate = _itemFromRow(items[i], itemCols);
     if (candidate.id == itemId) {
       item = candidate;
+      itemRow = i + 1;
       break;
     }
   }
   if (!item) return { error: 'item not found' };
+  item.image = itemSheet.getRange(itemRow, itemCols.image).getValue() || '';
 
   const tx = _sheet(TX_SHEET).getDataRange().getValues();
   const reservations = _getReservationMap();
@@ -589,7 +662,7 @@ function updateItem(p) {
   if (!p || !p.id) return { error: 'invalid payload' };
   const sheet = _sheet(ITEMS_SHEET);
   const cols = _prepareItemColumns(sheet);
-  const values = sheet.getDataRange().getValues();
+  const values = _getItemValuesWithoutImages(sheet, cols);
   for (let i = 1; i < values.length; i++) {
     if (_cell(values[i], cols.id, '') == p.id) {
       const row = i + 1;
@@ -618,7 +691,7 @@ function deleteItem(p) {
   if (!p || !p.id) return { error: 'invalid payload' };
   const sheet = _sheet(ITEMS_SHEET);
   const cols = _itemColumns(sheet);
-  const values = sheet.getDataRange().getValues();
+  const values = _getItemValuesWithoutImages(sheet, cols);
   for (let i = 1; i < values.length; i++) {
     if (_cell(values[i], cols.id, '') == p.id) {
       sheet.deleteRow(i + 1);
@@ -631,7 +704,7 @@ function deleteItem(p) {
 function getRequests() {
   const itemSheet = _sheet(ITEMS_SHEET);
   const itemCols = _itemColumns(itemSheet);
-  const items = itemSheet.getDataRange().getValues();
+  const items = _getItemValuesWithoutImages(itemSheet, itemCols);
   const itemTypes = {};
   for (let i = 1; i < items.length; i++) {
     const item = _itemFromRow(items[i], itemCols);
@@ -652,7 +725,7 @@ function addRequest(p) {
   const requestType = p.request_type === 'purchase' ? 'purchase' : 'loan';
   const itemSheet = _sheet(ITEMS_SHEET);
   const itemCols = _itemColumns(itemSheet);
-  const items = itemSheet.getDataRange().getValues();
+  const items = _getItemValuesWithoutImages(itemSheet, itemCols);
   let item_id = '';
   let item_name = '';
   let quantity = 0;
@@ -732,19 +805,24 @@ function addStorageLocation(p) {
 }
 
 function getRequestDetail(id) {
-  const values = _sheet(REQ_SHEET).getDataRange().getValues();
+  const requestSheet = _sheet(REQ_SHEET);
+  const values = _getValuesExcludingColumns(requestSheet, [15, 25]);
   let r = null;
+  let requestRow = -1;
   for (let i = 1; i < values.length; i++) {
     if (values[i][0] == id) {
       r = _normalizeRequestRow(values[i]);
+      requestRow = i + 1;
       break;
     }
   }
   if (!r) return { error: 'request not found' };
+  r.purchase_image = requestSheet.getRange(requestRow, 15).getValue() || '';
+  r.approved_image = requestSheet.getRange(requestRow, 25).getValue() || '';
   if (r.request_type === 'loan') {
     const itemSheet = _sheet(ITEMS_SHEET);
     const itemCols = _itemColumns(itemSheet);
-    const items = itemSheet.getDataRange().getValues();
+    const items = _getItemValuesWithoutImages(itemSheet, itemCols);
     for (let i = 1; i < items.length; i++) {
       const item = _itemFromRow(items[i], itemCols);
       if (item.id == r.item_id) {
@@ -830,7 +908,7 @@ function updateRequestStatus(p) {
     const txSheet = _sheet(TX_SHEET);
     const itemSheet = _sheet(ITEMS_SHEET);
     const itemCols = _itemColumns(itemSheet);
-    const itemValues = itemSheet.getDataRange().getValues();
+    const itemValues = _getItemValuesWithoutImages(itemSheet, itemCols);
     let itemRowIdx = -1;
     let itemType = 'equipment';
     let itemTotal = 0;
@@ -955,7 +1033,9 @@ function sendStatusEmail(o) {
 }
 
 function getLogs() {
-  const items = _sheet(ITEMS_SHEET).getDataRange().getValues();
+  const itemSheet = _sheet(ITEMS_SHEET);
+  const itemCols = _itemColumns(itemSheet);
+  const items = _getItemValuesWithoutImages(itemSheet, itemCols);
   const names = {};
   for (let i = 1; i < items.length; i++) names[items[i][0]] = items[i][1];
 

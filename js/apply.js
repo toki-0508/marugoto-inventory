@@ -28,7 +28,7 @@
 
   let requestType = 'loan';
   let purchaseImageDataUrl = '';
-  const ITEM_CACHE_KEY = 'marugoto_apply_items_cache_v1';
+  const ITEM_CACHE_KEY = 'marugoto_apply_items_cache_v2';
   const ITEM_CACHE_TTL_MS = 60 * 1000;
   const ITEM_TYPE_OPTIONS = [
     { value: 'equipment', label: '物品' },
@@ -159,6 +159,8 @@
   let itemsLoaded = false;
   let loanRequestsLoaded = false;
   let loanRequestsPromise = null;
+  let stopObservingPickerImages = () => {};
+  let stopObservingSelectedImages = () => {};
   const selectedLoanItems = new Map();
   const stockMap = new Map();
   const itemMap = new Map();
@@ -310,6 +312,7 @@
   };
 
   const renderSelectedLoanItems = () => {
+    stopObservingSelectedImages();
     const selections = [...selectedLoanItems.values()];
     if (!selections.length) {
       selectedLoanItemsEl.innerHTML = '<div class="selected-loan-empty">まだ物品が追加されていません</div>';
@@ -320,7 +323,7 @@
       const isInvalid = !quantity || quantity < 1 || quantity > max;
       return `
         <div class="selected-loan-item ${isInvalid ? 'invalid' : ''}" data-id="${item.id}">
-          <div class="thumb">${
+          <div class="thumb" ${item.image ? '' : `data-item-image="${escape(item.id)}"`}>${
             item.image ? `<img src="${item.image}" alt="">` : pickIcon(item.name, item.category)
           }</div>
           <div class="selected-loan-info">
@@ -350,6 +353,10 @@
         validateLoanSelections();
       });
     });
+    stopObservingSelectedImages = ItemImages.observe(
+      selectedLoanItemsEl,
+      selections.map(selection => selection.item)
+    );
   };
 
   const addLoanItemSelection = async (item, quantity) => {
@@ -373,6 +380,7 @@
   };
 
   const renderList = () => {
+    stopObservingPickerImages();
     const q = pickerSearch.value.trim();
     const filtered = allItems.filter(i =>
       (!curCat || i.category === curCat) &&
@@ -388,7 +396,7 @@
       const selected = selectedLoanItems.get(String(i.id));
       return `
         <div class="picker-item" data-id="${i.id}">
-          <div class="thumb">${
+          <div class="thumb" ${i.image ? '' : `data-item-image="${escape(i.id)}"`}>${
             i.image ? `<img src="${i.image}" alt="">` : pickIcon(i.name, i.category)
           }</div>
           <div class="info">
@@ -420,6 +428,7 @@
         if (item) await addLoanItemSelection(item, input.value);
       });
     });
+    stopObservingPickerImages = ItemImages.observe(pickerList, filtered);
   };
 
   const buildCats = () => {
