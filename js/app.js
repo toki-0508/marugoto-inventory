@@ -115,6 +115,7 @@ const DEFAULT_CATEGORY_OPTIONS = [
   '教具',
   '楽器',
   'カトラリー',
+  '物品',
   '学校備品',
   '寮',
 ];
@@ -657,6 +658,10 @@ const REQUEST_TYPE_LABEL = {
   purchase: '購入申請',
 };
 
+function findRequestById(requests, id) {
+  return requests.find(request => String(request.id) === String(id)) || null;
+}
+
 const renderActionButtons = request => {
   const status = request.status;
   if (isPurchaseRequest(request) && status === 'pending') return `
@@ -754,7 +759,9 @@ routes.requests = async () => {
     `).join('');
 
     list.querySelectorAll('.req-card').forEach(card => {
-      const id = Number(card.dataset.id);
+      const id = card.dataset.id;
+      const request = findRequestById(filtered, id);
+      if (!request) return;
       card.addEventListener('click', e => {
         if (e.target.closest('button')) return;
         go('reqDetail', { id });
@@ -768,7 +775,7 @@ routes.requests = async () => {
             return;
           }
           b.disabled = true;
-          const res = await performAction(act, id, r);
+          const res = await performAction(act, id, request);
           b.disabled = false;
           if (res === null) return;
           if (res.error) { showToast('エラー: ' + res.error); return; }

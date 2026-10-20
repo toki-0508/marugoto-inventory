@@ -46,13 +46,6 @@ function _normalizeItemType(value) {
   return 'equipment';
 }
 
-function _isKnownItemType(value) {
-  const raw = String(value || '').trim();
-  return raw === 'equipment' || raw === '物品'
-    || raw === 'electronics' || raw === '電子機器'
-    || raw === 'consumable' || raw === '消耗品';
-}
-
 function _defaultCategoryForItemType(itemType) {
   return DEFAULT_CATEGORY_BY_ITEM_TYPE[_normalizeItemType(itemType)] || DEFAULT_CATEGORY_BY_ITEM_TYPE.equipment;
 }
@@ -338,61 +331,6 @@ function _ensureSheetHeaders(sheet, headers) {
   if (sheet.getFrozenRows && sheet.getFrozenRows() < 1) {
     sheet.setFrozenRows(1);
   }
-}
-
-function _backfillMissingItemCategories(sheet) {
-  const cols = _itemColumns(sheet);
-  const lastRow = sheet.getLastRow();
-  if (!cols.category || !cols.item_type || lastRow < 2) return 0;
-
-  const rowCount = lastRow - 1;
-  const categoryValues = sheet.getRange(2, cols.category, rowCount, 1).getValues();
-  const itemTypeValues = sheet.getRange(2, cols.item_type, rowCount, 1).getValues();
-  let updatedCount = 0;
-
-  for (let i = 0; i < rowCount; i++) {
-    if (String(categoryValues[i][0] || '').trim()) continue;
-    categoryValues[i][0] = _defaultCategoryForItemType(itemTypeValues[i][0]);
-    updatedCount++;
-  }
-
-  if (updatedCount > 0) {
-    sheet.getRange(2, cols.category, rowCount, 1).setValues(categoryValues);
-  }
-  return updatedCount;
-}
-
-function _migrateMisplacedItemCategories(sheet) {
-  const cols = _itemColumns(sheet);
-  const lastRow = sheet.getLastRow();
-  if (!cols.category || !cols.item_type || lastRow < 2) return 0;
-
-  const rowCount = lastRow - 1;
-  const categoryValues = sheet.getRange(2, cols.category, rowCount, 1).getValues();
-  const itemTypeValues = sheet.getRange(2, cols.item_type, rowCount, 1).getValues();
-  const generatedCategories = {};
-  Object.keys(DEFAULT_CATEGORY_BY_ITEM_TYPE).forEach(itemType => {
-    generatedCategories[DEFAULT_CATEGORY_BY_ITEM_TYPE[itemType]] = true;
-  });
-  let updatedCount = 0;
-
-  for (let i = 0; i < rowCount; i++) {
-    const rawItemType = String(itemTypeValues[i][0] || '').trim();
-    if (!rawItemType || _isKnownItemType(rawItemType)) continue;
-
-    const currentCategory = String(categoryValues[i][0] || '').trim();
-    if (!currentCategory || generatedCategories[currentCategory]) {
-      categoryValues[i][0] = rawItemType;
-    }
-    itemTypeValues[i][0] = ITEM_TYPE_LABELS.equipment;
-    updatedCount++;
-  }
-
-  if (updatedCount > 0) {
-    sheet.getRange(2, cols.category, rowCount, 1).setValues(categoryValues);
-    sheet.getRange(2, cols.item_type, rowCount, 1).setValues(itemTypeValues);
-  }
-  return updatedCount;
 }
 
 function _prepareItemColumns(sheet) {
@@ -696,8 +634,6 @@ function setupSheets() {
   _ensureOrganizationQuantityLimitColumn(itemSheet);
   _ensureAliasesColumn(itemSheet);
   _ensureItemTrackingColumns(itemSheet);
-  _migrateMisplacedItemCategories(itemSheet);
-  _backfillMissingItemCategories(itemSheet);
   ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo', 'assigned_identifiers']);
   ensure(REQ_SHEET, _requestHeaders());
   ensure(STORAGE_LOCATIONS_SHEET, ['id', 'name', 'created_at']);
