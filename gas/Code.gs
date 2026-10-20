@@ -4,16 +4,16 @@
  * 【セットアップ手順】
  * 1) スプレッドシートを新規作成し、シートを 4 つ用意する
  *    シート名: items
- *      A1: id  B1: name  C1: category  D1: item_type  E1: total_quantity  F1: organization_quantity_limit  G1: storage_location  H1: note  I1: image  J1: aliases
+ *      A1: id  B1: name  C1: category  D1: item_type  E1: total_quantity  F1: organization_quantity_limit  G1: storage_location  H1: note  I1: image  J1: aliases  K1: tracking_enabled  L1: identifier_width
  *    シート名: transactions
- *      A1: id  B1: item_id  C1: type  D1: quantity  E1: target  F1: timestamp  G1: memo
+ *      A1: id  B1: item_id  C1: type  D1: quantity  E1: target  F1: timestamp  G1: memo  H1: assigned_identifiers
  *    シート名: requests
  *      A1: id  B1: item_id  C1: item_name  D1: quantity  E1: organization
  *      F1: user_name  G1: purpose  H1: status  I1: created_at  J1: processed_at
  *      K1: memo  L1: email  M1: request_type  N1: purchase_name  O1: purchase_image
  *      P1: purchase_note  Q1: purchase_item_type  R1: purchase_storage_location  S1: approved_item_name
  *      T1: approved_category  U1: approved_item_type  V1: approved_quantity  W1: approved_storage_location
- *      X1: approved_note  Y1: approved_image
+ *      X1: approved_note  Y1: approved_image  Z1: assigned_identifiers
  *    シート名: storage_locations
  *      A1: id  B1: name  C1: created_at
  *
@@ -43,6 +43,48 @@ function _normalizeItemType(value) {
   if (raw === 'electronics' || raw === '電子機器') return 'electronics';
   if (raw === 'equipment' || raw === '物品') return 'equipment';
   return 'equipment';
+}
+
+function _toBoolean(value) {
+  if (value === true || value === 1) return true;
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
+}
+
+function _parseIdentifiers(value) {
+  if (Array.isArray(value)) value = value.join(',');
+  return String(value || '')
+    .split(/[\s,、]+/)
+    .map(identifier => identifier.trim())
+    .filter(Boolean);
+}
+
+function _serializeIdentifiers(identifiers) {
+  return _parseIdentifiers(identifiers).join(',');
+}
+
+function _transactionIdentifiers(row) {
+  const storedIdentifiers = _parseIdentifiers(row && row[7]);
+  if (storedIdentifiers.length) return storedIdentifiers;
+  const memo = String(row && row[6] || '');
+  const match = memo.match(/識別番号:([^\s]+)/);
+  return match ? _parseIdentifiers(match[1]) : [];
+}
+
+function _identifierWidth(totalQuantity, configuredWidth) {
+  const storedWidth = Number(configuredWidth) || 0;
+  if (storedWidth > 0) return Math.max(2, storedWidth);
+  return Math.max(2, String(Math.max(0, Number(totalQuantity) || 0)).length);
+}
+
+function _generateIdentifiers(totalQuantity, configuredWidth) {
+  const total = Math.max(0, Number(totalQuantity) || 0);
+  const width = _identifierWidth(total, configuredWidth);
+  const identifiers = [];
+  for (let number = 1; number <= total; number++) {
+    identifiers.push(String(number).padStart(width, '0'));
+  }
+  return identifiers;
 }
 
 function doGet(e) {
@@ -173,8 +215,23 @@ function _itemColumns(sheet) {
     note: headers.note || 5,
     image: headers.image || 6,
     aliases: headers.aliases || 0,
-    item_type: headers.item_type || 0
+    item_type: headers.item_type || 0,
+    tracking_enabled: headers.tracking_enabled || 0,
+    identifier_width: headers.identifier_width || 0
   };
+}
+
+function _ensureItemTrackingColumns(sheet) {
+  const trackingHeader = 'tracking_enabled';
+  const widthHeader = 'identifier_width';
+  let headers = _headerMap(sheet);
+  if (!headers[trackingHeader]) {
+    sheet.getRange(1, sheet.getLastColumn() + 1).setValue(trackingHeader).setFontWeight('bold');
+  }
+  headers = _headerMap(sheet);
+  if (!headers[widthHeader]) {
+    sheet.getRange(1, sheet.getLastColumn() + 1).setValue(widthHeader).setFontWeight('bold');
+  }
 }
 
 function _ensureOrganizationQuantityLimitColumn(sheet) {
@@ -262,6 +319,7 @@ function _prepareItemColumns(sheet) {
   _ensureOrganizationQuantityLimitColumn(sheet);
   _ensureStorageLocationColumn(sheet);
   _ensureAliasesColumn(sheet);
+  _ensureItemTrackingColumns(sheet);
   return _itemColumns(sheet);
 }
 
@@ -272,6 +330,10 @@ function _itemFromRow(row, cols) {
   const organizationQuantityLimit = organizationQuantityLimitRaw === ''
     ? ''
     : (Number(organizationQuantityLimitRaw) || '');
+  const trackingEnabled = itemType !== 'consumable' && _toBoolean(_cell(row, cols.tracking_enabled, false));
+  const identifierWidth = trackingEnabled
+    ? _identifierWidth(totalQuantity, _cell(row, cols.identifier_width, ''))
+    : '';
   return {
     id: _cell(row, cols.id, ''),
     name: String(_cell(row, cols.name, '') || ''),
@@ -283,7 +345,12 @@ function _itemFromRow(row, cols) {
     storage_location: String(_cell(row, cols.storage_location, '') || ''),
     note: String(_cell(row, cols.note, '') || ''),
     image: String(_cell(row, cols.image, '') || ''),
-    aliases: String(_cell(row, cols.aliases, '') || '')
+    aliases: String(_cell(row, cols.aliases, '') || ''),
+    tracking_enabled: trackingEnabled,
+    identifier_width: identifierWidth,
+    identifier_range: trackingEnabled && totalQuantity > 0
+      ? _generateIdentifiers(totalQuantity, identifierWidth).filter((_, index) => index === 0 || index === totalQuantity - 1)
+      : []
   };
 }
 
@@ -297,8 +364,23 @@ function _requestHeaders() {
     'purpose', 'status', 'created_at', 'processed_at', 'memo', 'email',
     'request_type', 'purchase_name', 'purchase_image', 'purchase_note', 'purchase_item_type', 'purchase_storage_location',
     'approved_item_name', 'approved_category', 'approved_item_type', 'approved_quantity', 'approved_storage_location',
-    'approved_note', 'approved_image'
+    'approved_note', 'approved_image', 'assigned_identifiers'
   ];
+}
+
+function _requestColumns(sheet) {
+  const headers = _headerMap(sheet);
+  return {
+    assigned_identifiers: headers.assigned_identifiers || 0
+  };
+}
+
+function _prepareRequestColumns(sheet) {
+  const headers = _headerMap(sheet);
+  if (!headers.assigned_identifiers) {
+    sheet.getRange(1, sheet.getLastColumn() + 1).setValue('assigned_identifiers').setFontWeight('bold');
+  }
+  return _requestColumns(sheet);
 }
 
 function _normalizeStorageLocationName(value) {
@@ -362,7 +444,7 @@ function _syncStorageLocationsFromItems() {
   }
 }
 
-function _normalizeRequestRow(row) {
+function _normalizeRequestRow(row, requestCols) {
   return {
     id: row[0],
     item_id: row[1],
@@ -388,16 +470,19 @@ function _normalizeRequestRow(row) {
     approved_quantity: Number(row[21]) || 0,
     approved_storage_location: row[22] || '',
     approved_note: row[23] || '',
-    approved_image: row[24] || ''
+    approved_image: row[24] || '',
+    assigned_identifiers: _parseIdentifiers(_cell(row, requestCols && requestCols.assigned_identifiers, ''))
   };
 }
 
 function _getRequestsData() {
-  const values = _getValuesExcludingColumns(_sheet(REQ_SHEET), [15, 25]);
+  const sheet = _sheet(REQ_SHEET);
+  const requestCols = _requestColumns(sheet);
+  const values = _getValuesExcludingColumns(sheet, [15, 25]);
   const list = [];
   for (let i = 1; i < values.length; i++) {
     if (!values[i][0]) continue;
-    list.push(_normalizeRequestRow(values[i]));
+    list.push(_normalizeRequestRow(values[i], requestCols));
   }
   return list;
 }
@@ -419,6 +504,33 @@ function _getReservationMap() {
   return map;
 }
 
+function _getActiveIdentifierState(itemId, requests, excludeRequestId) {
+  const usedIdentifiers = {};
+  let untrackedQuantity = 0;
+  (requests || _getRequestsData()).forEach(request => {
+    if (Number(request.item_id) !== Number(itemId) || request.request_type !== 'loan') return;
+    if (request.status !== 'received') return;
+    if (excludeRequestId && Number(request.id) === Number(excludeRequestId)) return;
+    const assigned = _parseIdentifiers(request.assigned_identifiers);
+    if (!assigned.length) {
+      untrackedQuantity += Number(request.quantity) || 0;
+      return;
+    }
+    assigned.forEach(identifier => { usedIdentifiers[identifier] = true; });
+  });
+  return {
+    used_identifiers: Object.keys(usedIdentifiers),
+    untracked_quantity: untrackedQuantity
+  };
+}
+
+function _availableIdentifiers(item, requests, excludeRequestId) {
+  if (!item || !item.tracking_enabled) return [];
+  const state = _getActiveIdentifierState(item.id, requests, excludeRequestId);
+  return _generateIdentifiers(item.total_quantity, item.identifier_width)
+    .filter(identifier => !state.used_identifiers.includes(identifier));
+}
+
 function _buildApprovedPurchaseDraft(req, approvedItem) {
   const quantity = Number(
     (approvedItem && approvedItem.total_quantity) || req.approved_quantity || req.quantity || 0
@@ -432,7 +544,8 @@ function _buildApprovedPurchaseDraft(req, approvedItem) {
     storage_location: (approvedItem && approvedItem.storage_location) || req.approved_storage_location || req.purchase_storage_location || '',
     note: (approvedItem && approvedItem.note) || req.approved_note || req.purchase_note || '',
     image: (approvedItem && approvedItem.image) || req.approved_image || req.purchase_image || '',
-    aliases: (approvedItem && approvedItem.aliases) || ''
+    aliases: (approvedItem && approvedItem.aliases) || '',
+    tracking_enabled: _toBoolean(approvedItem && approvedItem.tracking_enabled)
   };
 }
 
@@ -494,12 +607,13 @@ function setupSheets() {
       s.setFrozenRows(1);
     }
   };
-  ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image', 'aliases']);
+  ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image', 'aliases', 'tracking_enabled', 'identifier_width']);
   _ensureItemTypeColumn(_sheet(ITEMS_SHEET));
   _ensureStorageLocationColumn(_sheet(ITEMS_SHEET));
   _ensureOrganizationQuantityLimitColumn(_sheet(ITEMS_SHEET));
   _ensureAliasesColumn(_sheet(ITEMS_SHEET));
-  ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo']);
+  _ensureItemTrackingColumns(_sheet(ITEMS_SHEET));
+  ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo', 'assigned_identifiers']);
   ensure(REQ_SHEET, _requestHeaders());
   ensure(STORAGE_LOCATIONS_SHEET, ['id', 'name', 'created_at']);
   _syncStorageLocationsFromItems();
@@ -602,7 +716,8 @@ function getItemDetail(itemId) {
     transactions.push({
       id, item_id: iid, type, quantity: q, target,
       timestamp: ts instanceof Date ? ts.toISOString() : String(ts),
-      memo: memo || ''
+      memo: memo || '',
+      assigned_identifiers: _transactionIdentifiers(tx[i])
     });
     if (type === 'lend')   { lent += q; map[target] = (map[target] || 0) + q; }
     if (type === 'return') { ret  += q; map[target] = (map[target] || 0) - q; }
@@ -618,6 +733,18 @@ function getItemDetail(itemId) {
     .map(k => ({ target: k, quantity: map[k] }));
   item.reserved_breakdown = Object.keys(reservation.breakdown)
     .map(k => ({ target: k, quantity: reservation.breakdown[k] }));
+  const requests = _getRequestsData();
+  item.identifier_assignments = item.tracking_enabled
+    ? requests
+      .filter(request => Number(request.item_id) === Number(item.id) && request.status === 'received')
+      .map(request => ({
+        request_id: request.id,
+        target: request.organization + '（' + request.user_name + '）',
+        identifiers: request.assigned_identifiers
+      }))
+      .filter(assignment => assignment.identifiers.length > 0)
+    : [];
+  item.available_identifiers = _availableIdentifiers(item, requests);
 
   return { item };
 }
@@ -630,7 +757,7 @@ function addTransaction(p) {
   const newId = _nextId(sheet);
   sheet.appendRow([
     newId, Number(p.item_id), p.type, Number(p.quantity),
-    p.target, new Date(), p.memo || ''
+    p.target, new Date(), p.memo || '', _serializeIdentifiers(p.assigned_identifiers)
   ]);
   return { success: true, id: newId };
 }
@@ -653,7 +780,13 @@ function addItem(p) {
   row[cols.note - 1] = p.note || '';
   row[cols.image - 1] = p.image || '';
   row[cols.aliases - 1] = p.aliases || '';
-  row[cols.item_type - 1] = ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment;
+  const itemType = _normalizeItemType(p.item_type);
+  const trackingEnabled = itemType !== 'consumable' && _toBoolean(p.tracking_enabled);
+  row[cols.item_type - 1] = ITEM_TYPE_LABELS[itemType] || ITEM_TYPE_LABELS.equipment;
+  row[cols.tracking_enabled - 1] = trackingEnabled;
+  row[cols.identifier_width - 1] = trackingEnabled
+    ? _identifierWidth(row[cols.total_quantity - 1], p.identifier_width)
+    : '';
   sheet.appendRow(row);
   return { success: true, id: newId };
 }
@@ -666,10 +799,35 @@ function updateItem(p) {
   for (let i = 1; i < values.length; i++) {
     if (_cell(values[i], cols.id, '') == p.id) {
       const row = i + 1;
+      const currentItem = _itemFromRow(values[i], cols);
+      const nextItemType = p.item_type === undefined ? currentItem.item_type : _normalizeItemType(p.item_type);
+      const nextTotalQuantity = p.total_quantity === undefined
+        ? currentItem.total_quantity
+        : Math.max(0, Number(p.total_quantity) || 0);
+      const requestedTracking = p.tracking_enabled === undefined
+        ? currentItem.tracking_enabled
+        : _toBoolean(p.tracking_enabled);
+      const nextTrackingEnabled = nextItemType !== 'consumable' && requestedTracking;
+      const activeState = _getActiveIdentifierState(currentItem.id);
+      const hasActiveLoans = activeState.used_identifiers.length > 0 || activeState.untracked_quantity > 0;
+      if (!currentItem.tracking_enabled && nextTrackingEnabled && hasActiveLoans) {
+        return { error: '貸出中の物品があるため個体識別をONにできません。返却完了後に設定してください。' };
+      }
+      if (currentItem.tracking_enabled && !nextTrackingEnabled && hasActiveLoans) {
+        return { error: '個体識別番号を使用中のためOFFにできません。返却完了後に設定してください。' };
+      }
+      if (nextTrackingEnabled) {
+        const highestUsedNumber = activeState.used_identifiers.reduce((max, identifier) => {
+          return Math.max(max, Number(identifier) || 0);
+        }, 0);
+        if (highestUsedNumber > nextTotalQuantity) {
+          return { error: '貸出中の識別番号が総数を超えるため変更できません。返却完了後に総数を変更してください。' };
+        }
+      }
       if (p.name           !== undefined) sheet.getRange(row, cols.name).setValue(p.name);
       if (p.category       !== undefined) sheet.getRange(row, cols.category).setValue(p.category);
-      if (p.item_type      !== undefined) sheet.getRange(row, cols.item_type).setValue(ITEM_TYPE_LABELS[_normalizeItemType(p.item_type)] || ITEM_TYPE_LABELS.equipment);
-      if (p.total_quantity !== undefined) sheet.getRange(row, cols.total_quantity).setValue(Number(p.total_quantity) || 0);
+      if (p.item_type      !== undefined) sheet.getRange(row, cols.item_type).setValue(ITEM_TYPE_LABELS[nextItemType] || ITEM_TYPE_LABELS.equipment);
+      if (p.total_quantity !== undefined) sheet.getRange(row, cols.total_quantity).setValue(nextTotalQuantity);
       if (p.organization_quantity_limit !== undefined) {
         sheet.getRange(row, cols.organization_quantity_limit).setValue(
           p.organization_quantity_limit === '' || p.organization_quantity_limit == null
@@ -681,6 +839,12 @@ function updateItem(p) {
       if (p.note           !== undefined) sheet.getRange(row, cols.note).setValue(p.note);
       if (p.image          !== undefined) sheet.getRange(row, cols.image).setValue(p.image);
       if (p.aliases        !== undefined) sheet.getRange(row, cols.aliases).setValue(p.aliases);
+      if (p.tracking_enabled !== undefined || p.item_type !== undefined) {
+        sheet.getRange(row, cols.tracking_enabled).setValue(nextTrackingEnabled);
+        sheet.getRange(row, cols.identifier_width).setValue(nextTrackingEnabled
+          ? _identifierWidth(nextTotalQuantity, currentItem.tracking_enabled ? currentItem.identifier_width : '')
+          : '');
+      }
       return { success: true };
     }
   }
@@ -705,16 +869,23 @@ function getRequests() {
   const itemSheet = _sheet(ITEMS_SHEET);
   const itemCols = _itemColumns(itemSheet);
   const items = _getItemValuesWithoutImages(itemSheet, itemCols);
-  const itemTypes = {};
+  const itemMetadata = {};
   for (let i = 1; i < items.length; i++) {
     const item = _itemFromRow(items[i], itemCols);
-    itemTypes[item.id] = item.item_type || 'equipment';
+    itemMetadata[item.id] = {
+      item_type: item.item_type || 'equipment',
+      tracking_enabled: item.tracking_enabled
+    };
   }
   return {
-    requests: _getRequestsData().map(request => ({
-      ...request,
-      item_type: request.request_type === 'loan' ? (itemTypes[request.item_id] || 'equipment') : ''
-    })).reverse()
+    requests: _getRequestsData().map(request => {
+      const metadata = itemMetadata[request.item_id] || {};
+      return {
+        ...request,
+        item_type: request.request_type === 'loan' ? (metadata.item_type || 'equipment') : '',
+        tracking_enabled: request.request_type === 'loan' && Boolean(metadata.tracking_enabled)
+      };
+    }).reverse()
   };
 }
 
@@ -792,7 +963,7 @@ function addRequest(p) {
     p.organization, p.user_name, purpose,
     'pending', new Date(), '', '', p.email || '',
     requestType, purchase_name, purchase_image, purchase_note, ITEM_TYPE_LABELS[purchase_item_type] || ITEM_TYPE_LABELS.equipment, purchase_storage_location,
-    '', '', '', '', '', '', ''
+    '', '', '', '', '', '', '', ''
   ]);
   return { success: true, id: newId };
 }
@@ -806,12 +977,13 @@ function addStorageLocation(p) {
 
 function getRequestDetail(id) {
   const requestSheet = _sheet(REQ_SHEET);
+  const requestCols = _requestColumns(requestSheet);
   const values = _getValuesExcludingColumns(requestSheet, [15, 25]);
   let r = null;
   let requestRow = -1;
   for (let i = 1; i < values.length; i++) {
     if (values[i][0] == id) {
-      r = _normalizeRequestRow(values[i]);
+      r = _normalizeRequestRow(values[i], requestCols);
       requestRow = i + 1;
       break;
     }
@@ -827,6 +999,9 @@ function getRequestDetail(id) {
       const item = _itemFromRow(items[i], itemCols);
       if (item.id == r.item_id) {
         r.item_type = item.item_type || 'equipment';
+        r.tracking_enabled = item.tracking_enabled;
+        r.available_identifiers = _availableIdentifiers(item, _getRequestsData());
+        r.identifier_width = item.identifier_width;
         break;
       }
     }
@@ -842,7 +1017,8 @@ function getRequestDetail(id) {
       id: tx[i][0], item_id: tx[i][1], type: tx[i][2],
       quantity: Number(tx[i][3]), target: tx[i][4],
       timestamp: tx[i][5] instanceof Date ? tx[i][5].toISOString() : String(tx[i][5]),
-      memo
+      memo,
+      assigned_identifiers: _transactionIdentifiers(tx[i])
     });
   }
   r.transactions = transactions.reverse();
@@ -851,6 +1027,18 @@ function getRequestDetail(id) {
 
 function updateRequestStatus(p) {
   if (!p || !p.id || !p.status) return { error: 'invalid payload' };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return { error: 'ほかの更新処理中です。数秒後にもう一度お試しください。' };
+  }
+  try {
+    return _updateRequestStatus(p);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _updateRequestStatus(p) {
   const allowed = ['pending', 'ready', 'received', 'returned', 'rejected', 'approved'];
   if (allowed.indexOf(p.status) === -1) return { error: 'invalid status' };
 
@@ -862,9 +1050,16 @@ function updateRequestStatus(p) {
   }
   if (rowIdx === -1) return { error: 'request not found' };
 
-  const request = _normalizeRequestRow(row);
-  if (request.request_type === 'purchase' && p.status === 'approved' && request.status === 'approved') {
-    return { error: 'already approved' };
+  const request = _normalizeRequestRow(row, _requestColumns(sheet));
+  const allowedTransitions = request.request_type === 'purchase'
+    ? { pending: ['approved', 'rejected'] }
+    : {
+        pending: ['ready', 'rejected'],
+        ready: ['received', 'rejected'],
+        received: ['returned']
+      };
+  if (!(allowedTransitions[request.status] || []).includes(p.status)) {
+    return { error: '現在の状態からその処理には変更できません。画面を再読み込みしてください。' };
   }
   if (request.request_type === 'purchase' && p.status === 'approved') {
     const approvedItem = p.approved_item || {};
@@ -888,7 +1083,13 @@ function updateRequestStatus(p) {
     newRow[itemCols.note - 1] = draft.note;
     newRow[itemCols.image - 1] = draft.image;
     newRow[itemCols.aliases - 1] = draft.aliases || '';
-    newRow[itemCols.item_type - 1] = ITEM_TYPE_LABELS[_normalizeItemType(draft.item_type)] || ITEM_TYPE_LABELS.equipment;
+    const approvedItemType = _normalizeItemType(draft.item_type);
+    const approvedTrackingEnabled = approvedItemType !== 'consumable' && _toBoolean(draft.tracking_enabled);
+    newRow[itemCols.item_type - 1] = ITEM_TYPE_LABELS[approvedItemType] || ITEM_TYPE_LABELS.equipment;
+    newRow[itemCols.tracking_enabled - 1] = approvedTrackingEnabled;
+    newRow[itemCols.identifier_width - 1] = approvedTrackingEnabled
+      ? _identifierWidth(draft.total_quantity, '')
+      : '';
     itemSheet.appendRow(newRow);
     sheet.getRange(rowIdx, 19).setValue(draft.name);            // S: approved_item_name
     sheet.getRange(rowIdx, 20).setValue(draft.category);        // T: approved_category
@@ -899,9 +1100,49 @@ function updateRequestStatus(p) {
     sheet.getRange(rowIdx, 25).setValue(draft.image);           // Y: approved_image
   }
 
+  let assignedIdentifiers = request.assigned_identifiers || [];
+  if (request.request_type === 'loan' && (p.status === 'received' || p.status === 'returned')) {
+    const itemSheet = _sheet(ITEMS_SHEET);
+    const itemCols = _itemColumns(itemSheet);
+    const itemValues = _getItemValuesWithoutImages(itemSheet, itemCols);
+    let loanItem = null;
+    for (let i = 1; i < itemValues.length; i++) {
+      const candidate = _itemFromRow(itemValues[i], itemCols);
+      if (candidate.id == request.item_id) {
+        loanItem = candidate;
+        break;
+      }
+    }
+    if (!loanItem) return { error: 'item not found' };
+
+    if (p.status === 'received' && loanItem.tracking_enabled) {
+      assignedIdentifiers = _parseIdentifiers(p.assigned_identifiers);
+      const uniqueIdentifiers = {};
+      assignedIdentifiers.forEach(identifier => { uniqueIdentifiers[identifier] = true; });
+      if (assignedIdentifiers.length !== Number(request.quantity) || Object.keys(uniqueIdentifiers).length !== assignedIdentifiers.length) {
+        return { error: '申請数量と同じ数の識別番号を重複なく選択してください。' };
+      }
+      const validIdentifiers = _generateIdentifiers(loanItem.total_quantity, loanItem.identifier_width);
+      const unavailableIdentifiers = _getActiveIdentifierState(loanItem.id).used_identifiers;
+      for (let i = 0; i < assignedIdentifiers.length; i++) {
+        const identifier = assignedIdentifiers[i];
+        if (validIdentifiers.indexOf(identifier) === -1) {
+          return { error: '識別番号 ' + identifier + ' はこの物品では使用できません。' };
+        }
+        if (unavailableIdentifiers.indexOf(identifier) !== -1) {
+          return { error: '識別番号 ' + identifier + ' はすでに貸出中です。別の番号を選択してください。' };
+        }
+      }
+    }
+  }
+
   sheet.getRange(rowIdx, 8).setValue(p.status);                    // H: status
   sheet.getRange(rowIdx, 10).setValue(new Date());                 // J: processed_at
   if (p.memo != null) sheet.getRange(rowIdx, 11).setValue(p.memo); // K: memo
+  if (p.status === 'received' && assignedIdentifiers.length) {
+    const requestCols = _prepareRequestColumns(sheet);
+    sheet.getRange(rowIdx, requestCols.assigned_identifiers).setValue(_serializeIdentifiers(assignedIdentifiers));
+  }
 
   // 受け渡し完了 → lend、返却完了 → return を自動記録
   if (request.request_type === 'loan' && (p.status === 'received' || p.status === 'returned')) {
@@ -930,13 +1171,15 @@ function updateRequestStatus(p) {
       txSheet.appendRow([
         newId, Number(request.item_id), 'consume',
         Number(request.quantity), target, new Date(),
-        '申請#' + request.id + ' 消耗'
+        '申請#' + request.id + ' 消耗', ''
       ]);
     } else {
       txSheet.appendRow([
         newId, Number(request.item_id), isReturn ? 'return' : 'lend',
         Number(request.quantity), target, new Date(),
-        '申請#' + request.id + (isReturn ? ' 返却' : '')
+        '申請#' + request.id + (isReturn ? ' 返却' : '') +
+          (assignedIdentifiers.length ? ' 識別番号:' + _serializeIdentifiers(assignedIdentifiers) : ''),
+        _serializeIdentifiers(assignedIdentifiers)
       ]);
     }
   }
@@ -1048,7 +1291,8 @@ function getLogs() {
       id, item_id: iid, item_name: names[iid] || '?',
       type, quantity: Number(qty), target,
       timestamp: ts instanceof Date ? ts.toISOString() : String(ts),
-      memo: memo || ''
+      memo: memo || '',
+      assigned_identifiers: _transactionIdentifiers(tx[i])
     });
   }
   return { logs: logs.reverse() };

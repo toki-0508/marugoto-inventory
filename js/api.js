@@ -15,6 +15,37 @@ const Mock = (() => {
     return 'equipment';
   };
 
+  const identifierWidth = (totalQuantity, configuredWidth) => {
+    const storedWidth = Number(configuredWidth) || 0;
+    if (storedWidth > 0) return Math.max(2, storedWidth);
+    return Math.max(2, String(Math.max(0, Number(totalQuantity) || 0)).length);
+  };
+  const generateIdentifiers = (totalQuantity, configuredWidth) => {
+    const total = Math.max(0, Number(totalQuantity) || 0);
+    const width = identifierWidth(total, configuredWidth);
+    return Array.from({ length: total }, (_, index) => String(index + 1).padStart(width, '0'));
+  };
+  const activeIdentifierState = itemId => {
+    const usedIdentifiers = new Set();
+    let untrackedQuantity = 0;
+    requests.forEach(request => {
+      if (Number(request.item_id) !== Number(itemId) || request.request_type !== 'loan' || request.status !== 'received') return;
+      const assigned = Array.isArray(request.assigned_identifiers) ? request.assigned_identifiers : [];
+      if (!assigned.length) {
+        untrackedQuantity += Number(request.quantity) || 0;
+        return;
+      }
+      assigned.forEach(identifier => usedIdentifiers.add(String(identifier)));
+    });
+    return { usedIdentifiers, untrackedQuantity };
+  };
+  const availableIdentifiers = item => {
+    if (!item || !item.tracking_enabled) return [];
+    const { usedIdentifiers } = activeIdentifierState(item.id);
+    return generateIdentifiers(item.total_quantity, item.identifier_width)
+      .filter(identifier => !usedIdentifiers.has(identifier));
+  };
+
   const calcLending = id => {
     let lent = 0, ret = 0;
     tx.forEach(t => {
@@ -72,6 +103,8 @@ const Mock = (() => {
     note: request.approved_note || request.purchase_note || '',
     image: request.approved_image || request.purchase_image || '',
     aliases: '',
+    tracking_enabled: Boolean(request.approved_tracking_enabled),
+    identifier_width: '',
   });
 
   const requestCountsTowardOrganizationLimit = (request, itemType) => {
@@ -137,6 +170,14 @@ const Mock = (() => {
           transactions: [...myTx].reverse(),
           breakdown: Object.entries(map).filter(([,q]) => q > 0).map(([target, quantity]) => ({ target, quantity })),
           reserved_breakdown: reservedBreakdown,
+          identifier_assignments: requests
+            .filter(request => request.item_id === id && request.status === 'received' && request.assigned_identifiers?.length)
+            .map(request => ({
+              request_id: request.id,
+              target: `${request.organization}（${request.user_name}）`,
+              identifiers: [...request.assigned_identifiers]
+            })),
+          available_identifiers: availableIdentifiers(it),
         }
       });
     },
@@ -147,6 +188,8 @@ const Mock = (() => {
     },
     addItem: payload => {
       const newId = nextItemId();
+      const itemType = normalizeItemType(payload.item_type);
+      const trackingEnabled = itemType !== 'consumable' && Boolean(payload.tracking_enabled);
       items.push({
         id: newId,
         ...payload,
@@ -154,7 +197,9 @@ const Mock = (() => {
           ? ''
           : (Number(payload.organization_quantity_limit) || ''),
         storage_location: upsertStorageLocation(payload.storage_location),
-        item_type: normalizeItemType(payload.item_type),
+        item_type: itemType,
+        tracking_enabled: trackingEnabled,
+        identifier_width: trackingEnabled ? identifierWidth(payload.total_quantity, payload.identifier_width) : '',
         image: payload.image || '',
         aliases: payload.aliases || ''
       });
@@ -163,6 +208,24 @@ const Mock = (() => {
     updateItem: payload => {
       const it = items.find(x => x.id === Number(payload.id));
       if (!it) return Promise.resolve({ error: 'not found' });
+      const wasTrackingEnabled = Boolean(it.tracking_enabled);
+      const nextItemType = payload.item_type === undefined ? normalizeItemType(it.item_type) : normalizeItemType(payload.item_type);
+      const nextTotalQuantity = payload.total_quantity === undefined ? Number(it.total_quantity) : Math.max(0, Number(payload.total_quantity) || 0);
+      const nextTrackingEnabled = nextItemType !== 'consumable' && (
+        payload.tracking_enabled === undefined ? Boolean(it.tracking_enabled) : Boolean(payload.tracking_enabled)
+      );
+      const { usedIdentifiers, untrackedQuantity } = activeIdentifierState(it.id);
+      const hasActiveLoans = usedIdentifiers.size > 0 || untrackedQuantity > 0;
+      if (!wasTrackingEnabled && nextTrackingEnabled && hasActiveLoans) {
+        return Promise.resolve({ error: '貸出中の物品があるため個体識別をONにできません。返却完了後に設定してください。' });
+      }
+      if (wasTrackingEnabled && !nextTrackingEnabled && hasActiveLoans) {
+        return Promise.resolve({ error: '個体識別番号を使用中のためOFFにできません。返却完了後に設定してください。' });
+      }
+      const highestUsedNumber = Math.max(0, ...[...usedIdentifiers].map(identifier => Number(identifier) || 0));
+      if (nextTrackingEnabled && highestUsedNumber > nextTotalQuantity) {
+        return Promise.resolve({ error: '貸出中の識別番号が総数を超えるため変更できません。返却完了後に総数を変更してください。' });
+      }
       ['name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image', 'aliases'].forEach(k => {
         if (payload[k] === undefined) return;
         if (k === 'total_quantity') {
@@ -183,6 +246,10 @@ const Mock = (() => {
         }
         it[k] = payload[k];
       });
+      it.tracking_enabled = nextTrackingEnabled;
+      it.identifier_width = nextTrackingEnabled
+        ? identifierWidth(nextTotalQuantity, wasTrackingEnabled ? it.identifier_width : '')
+        : '';
       return Promise.resolve({ success: true });
     },
     getStorageLocations: () => {
@@ -208,7 +275,16 @@ const Mock = (() => {
         item_name: (items.find(i => i.id === t.item_id) || {}).name || '?'
       }))
     }),
-    getRequests: () => Promise.resolve({ requests: [...requests].reverse() }),
+    getRequests: () => Promise.resolve({
+      requests: [...requests].reverse().map(request => {
+        const item = items.find(candidate => candidate.id === Number(request.item_id));
+        return {
+          ...request,
+          item_type: request.request_type === 'loan' ? normalizeItemType(item?.item_type) : '',
+          tracking_enabled: request.request_type === 'loan' && Boolean(item?.tracking_enabled),
+        };
+      })
+    }),
     addRequest: payload => {
       const newId = nextRequestId();
       const type = payload.request_type === 'purchase' ? 'purchase' : 'loan';
@@ -250,6 +326,7 @@ const Mock = (() => {
         item_id: itemId,
         item_name: itemName,
         item_type: itemType,
+        tracking_enabled: type === 'loan' ? Boolean(items.find(item => item.id === itemId)?.tracking_enabled) : false,
         quantity,
         organization: payload.organization,
         user_name: payload.user_name,
@@ -272,6 +349,7 @@ const Mock = (() => {
         approved_storage_location: '',
         approved_note: '',
         approved_image: '',
+        assigned_identifiers: [],
       };
       requests.push(r);
       return Promise.resolve({ success: true, id: newId });
@@ -280,13 +358,40 @@ const Mock = (() => {
       const r = requests.find(x => x.id === Number(id));
       if (!r) return Promise.resolve({ error: 'not found' });
       const myTx = tx.filter(t => (t.memo || '').indexOf('申請#' + r.id) === 0);
-      return Promise.resolve({ request: { ...r, transactions: [...myTx].reverse() } });
+      const item = items.find(candidate => candidate.id === Number(r.item_id));
+      return Promise.resolve({
+        request: {
+          ...r,
+          tracking_enabled: Boolean(item?.tracking_enabled),
+          identifier_width: item?.identifier_width || '',
+          available_identifiers: availableIdentifiers(item),
+          transactions: [...myTx].reverse()
+        }
+      });
     },
-    updateRequestStatus: ({ id, status, memo, approved_item }) => {
+    updateRequestStatus: ({ id, status, memo, approved_item, assigned_identifiers }) => {
       const r = requests.find(x => x.id === Number(id));
       if (!r) return Promise.resolve({ error: 'not found' });
-      if (r.request_type === 'purchase' && status === 'approved' && r.status === 'approved') {
-        return Promise.resolve({ error: 'already approved' });
+      const allowedTransitions = r.request_type === 'purchase'
+        ? { pending: ['approved', 'rejected'] }
+        : { pending: ['ready', 'rejected'], ready: ['received', 'rejected'], received: ['returned'] };
+      if (!(allowedTransitions[r.status] || []).includes(status)) {
+        return Promise.resolve({ error: '現在の状態からその処理には変更できません。画面を再読み込みしてください。' });
+      }
+      const item = items.find(candidate => candidate.id === Number(r.item_id));
+      let selectedIdentifiers = Array.isArray(r.assigned_identifiers) ? [...r.assigned_identifiers] : [];
+      if (r.request_type === 'loan' && status === 'received' && item?.tracking_enabled) {
+        selectedIdentifiers = [...new Set((assigned_identifiers || []).map(identifier => String(identifier)))];
+        if (selectedIdentifiers.length !== Number(r.quantity)) {
+          return Promise.resolve({ error: '申請数量と同じ数の識別番号を重複なく選択してください。' });
+        }
+        const validIdentifiers = generateIdentifiers(item.total_quantity, item.identifier_width);
+        const { usedIdentifiers } = activeIdentifierState(item.id);
+        const invalidIdentifier = selectedIdentifiers.find(identifier => !validIdentifiers.includes(identifier));
+        if (invalidIdentifier) return Promise.resolve({ error: `識別番号 ${invalidIdentifier} はこの物品では使用できません。` });
+        const unavailableIdentifier = selectedIdentifiers.find(identifier => usedIdentifiers.has(identifier));
+        if (unavailableIdentifier) return Promise.resolve({ error: `識別番号 ${unavailableIdentifier} はすでに貸出中です。別の番号を選択してください。` });
+        r.assigned_identifiers = selectedIdentifiers;
       }
       r.status = status;
       r.processed_at = new Date().toISOString();
@@ -299,10 +404,10 @@ const Mock = (() => {
         r.approved_storage_location = approved_item.storage_location || '';
         r.approved_note = approved_item.note || '';
         r.approved_image = approved_item.image || '';
+        r.approved_tracking_enabled = Boolean(approved_item.tracking_enabled);
       }
       // 受け渡し完了時は lend、返却完了時は return を自動記録
       if (status === 'received') {
-        const item = items.find(x => x.id === Number(r.item_id));
         const newId = nextTxId();
         if (isConsumable(item)) {
           item.total_quantity = Math.max(0, Number(item.total_quantity || 0) - Number(r.quantity || 0));
@@ -310,14 +415,16 @@ const Mock = (() => {
             id: newId, item_id: r.item_id, type: 'consume', quantity: r.quantity,
             target: `${r.organization}（${r.user_name}）`,
             timestamp: new Date().toISOString(),
-            memo: `申請#${r.id} 消耗`
+            memo: `申請#${r.id} 消耗`,
+            assigned_identifiers: []
           });
         } else {
           tx.push({
             id: newId, item_id: r.item_id, type: 'lend', quantity: r.quantity,
             target: `${r.organization}（${r.user_name}）`,
             timestamp: new Date().toISOString(),
-            memo: `申請#${r.id}`
+            memo: `申請#${r.id}${selectedIdentifiers.length ? ` 識別番号:${selectedIdentifiers.join(',')}` : ''}`,
+            assigned_identifiers: [...selectedIdentifiers]
           });
         }
       } else if (status === 'returned') {
@@ -326,7 +433,8 @@ const Mock = (() => {
           id: newId, item_id: r.item_id, type: 'return', quantity: r.quantity,
           target: `${r.organization}（${r.user_name}）`,
           timestamp: new Date().toISOString(),
-          memo: `申請#${r.id} 返却`
+          memo: `申請#${r.id} 返却${selectedIdentifiers.length ? ` 識別番号:${selectedIdentifiers.join(',')}` : ''}`,
+          assigned_identifiers: [...selectedIdentifiers]
         });
       } else if (status === 'approved' && r.request_type === 'purchase') {
         const draft = normalizePurchaseDraft(r);

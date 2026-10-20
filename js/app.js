@@ -113,6 +113,18 @@ const normalizeItemType = value => {
 };
 const getItemType = item => normalizeItemType(item?.item_type);
 const getItemTypeLabel = item => ITEM_TYPE_LABELS[getItemType(item)] || ITEM_TYPE_LABELS.equipment;
+const identifierWidth = item => Math.max(
+  2,
+  Number(item?.identifier_width) || String(Math.max(0, Number(item?.total_quantity) || 0)).length
+);
+const formatIdentifier = (number, width) => String(number).padStart(width, '0');
+const identifierRangeLabel = item => {
+  const total = Math.max(0, Number(item?.total_quantity) || 0);
+  if (!item?.tracking_enabled || total < 1) return '';
+  const width = identifierWidth(item);
+  return `${formatIdentifier(1, width)}〜${formatIdentifier(total, width)}`;
+};
+const formatIdentifiers = identifiers => (identifiers || []).join(', ');
 const getRequestItemType = request => {
   if (isPurchaseRequest(request)) {
     return normalizeItemType(request.approved_item_type || request.purchase_item_type);
@@ -146,6 +158,42 @@ const bindSelectableField = (form, selectName, newInputName) => {
   };
   select.addEventListener('change', syncVisibility);
   syncVisibility();
+};
+const trackingFieldHtml = checked => `
+  <div class="tracking-field">
+    <label class="tracking-toggle">
+      <input name="tracking_enabled" type="checkbox" ${checked ? 'checked' : ''} />
+      <span>
+        <strong>個体識別番号を使う</strong>
+        <small>パソコンなど、1台ずつ番号を指定して貸し出す物品向け</small>
+      </span>
+    </label>
+    <div class="tracking-preview" data-tracking-preview hidden></div>
+  </div>
+`;
+const bindTrackingField = (form, configuredWidth = '') => {
+  const checkbox = form.elements.tracking_enabled;
+  const totalInput = form.elements.total_quantity;
+  const itemTypeSelect = form.elements.item_type;
+  const preview = form.querySelector('[data-tracking-preview]');
+  if (!checkbox || !totalInput || !itemTypeSelect || !preview) return;
+
+  const sync = () => {
+    const isConsumable = normalizeItemType(itemTypeSelect.value) === 'consumable';
+    if (isConsumable) checkbox.checked = false;
+    checkbox.disabled = isConsumable;
+    const total = Math.max(0, Number(totalInput.value) || 0);
+    preview.hidden = !checkbox.checked;
+    if (!checkbox.checked) return;
+    const width = Math.max(2, Number(configuredWidth) || String(total).length);
+    preview.textContent = total > 0
+      ? `識別番号 ${formatIdentifier(1, width)}〜${formatIdentifier(total, width)} を使用します`
+      : '総数を入力すると識別番号の範囲を確認できます';
+  };
+  checkbox.addEventListener('change', sync);
+  totalInput.addEventListener('input', sync);
+  itemTypeSelect.addEventListener('change', sync);
+  sync();
 };
 const ensureStorageLocations = async () => {
   if (State.storageLocations.length) return State.storageLocations;
@@ -196,10 +244,72 @@ function askComment(opts) {
 (() => {
   const m = document.getElementById('commentModal');
   if (m) { m.hidden = true; m.style.display = 'none'; }
+  const identifierModal = document.getElementById('identifierModal');
+  if (identifierModal) { identifierModal.hidden = true; identifierModal.style.display = 'none'; }
 })();
 
+async function askIdentifierSelection(request) {
+  const { request: currentRequest, error } = await Api.getRequestDetail(request.id);
+  if (error || !currentRequest) {
+    showToast('識別番号の読み込みに失敗しました');
+    return null;
+  }
+  if (!currentRequest.tracking_enabled) return [];
+
+  const quantity = Number(currentRequest.quantity) || 0;
+  const availableIdentifiers = currentRequest.available_identifiers || [];
+  if (availableIdentifiers.length < quantity) {
+    showToast(`選択できる識別番号が不足しています（利用可能 ${availableIdentifiers.length}個）`);
+    return null;
+  }
+
+  return new Promise(resolve => {
+    const modal = document.getElementById('identifierModal');
+    const desc = document.getElementById('identifierModalDesc');
+    const grid = document.getElementById('identifierGrid');
+    const count = document.getElementById('identifierCount');
+    const cancel = document.getElementById('identifierCancel');
+    const confirmButton = document.getElementById('identifierConfirm');
+    desc.textContent = `${currentRequest.item_name}を${quantity}個貸し出します。未使用の番号から選択してください。`;
+    grid.innerHTML = availableIdentifiers.map(identifier => `
+      <label class="identifier-option">
+        <input type="checkbox" value="${escape(identifier)}" />
+        <span>${escape(identifier)}</span>
+      </label>
+    `).join('');
+    modal.hidden = false;
+    modal.style.display = 'flex';
+
+    const selectedIdentifiers = () => [...grid.querySelectorAll('input:checked')].map(input => input.value);
+    const sync = () => {
+      const selected = selectedIdentifiers();
+      count.textContent = `${selected.length} / ${quantity}個を選択中`;
+      confirmButton.disabled = selected.length !== quantity;
+      grid.querySelectorAll('input:not(:checked)').forEach(input => {
+        input.disabled = selected.length >= quantity;
+      });
+    };
+    const cleanup = () => {
+      modal.hidden = true;
+      modal.style.display = 'none';
+      grid.onchange = null;
+      cancel.onclick = null;
+      confirmButton.onclick = null;
+    };
+    grid.onchange = sync;
+    cancel.onclick = () => { cleanup(); resolve(null); };
+    confirmButton.onclick = () => {
+      const selected = selectedIdentifiers();
+      if (selected.length !== quantity) return;
+      cleanup();
+      resolve(selected);
+    };
+    sync();
+  });
+}
+
 // アクション → コメント要否を判定して実行
-async function performAction(act, id) {
+async function performAction(act, id, request) {
   let memo = '';
   if (act === 'ready') {
     const m = await askComment({
@@ -220,6 +330,13 @@ async function performAction(act, id) {
     });
     if (m === null) return null;
     memo = m;
+  } else if (act === 'received') {
+    const assignedIdentifiers = await askIdentifierSelection(request);
+    if (assignedIdentifiers === null) return null;
+    if (assignedIdentifiers.length) {
+      return Api.updateRequestStatus({ id, status: act, memo, assigned_identifiers: assignedIdentifiers });
+    }
+    if (!confirm(`この申請を「${ACTION_LABEL[act]}」にしますか？`)) return null;
   } else {
     if (!confirm(`この申請を「${ACTION_LABEL[act]}」にしますか？`)) return null;
   }
@@ -372,6 +489,7 @@ routes.home = async () => {
             ${i.aliases ? `<div class="item-note">別名：${escape(ItemSearch.formatAliases(i.aliases))}</div>` : ''}
             <div class="item-note">${i.storage_location ? '保管場所：' + escape(i.storage_location) : ''}</div>
             <div class="item-note">${i.organization_quantity_limit ? '団体上限：' + escape(i.organization_quantity_limit) + '個' : ''}</div>
+            <div class="item-note">${i.tracking_enabled ? '個体識別：' + escape(identifierRangeLabel(i)) : ''}</div>
             <div class="item-note">${i.note ? '備考：' + escape(i.note) : ''}</div>
           </div>
         </div>
@@ -423,10 +541,11 @@ routes.detail = async ({ id }) => {
             <td class="date">${dateStr}</td>
             <td><span class="tag ${t.type}">${t.type === 'lend' ? '貸出' : t.type === 'return' ? '返却' : '消耗'}</span></td>
             <td>${escape(t.target)}</td>
+            <td>${t.assigned_identifiers?.length ? `識別番号 ${escape(formatIdentifiers(t.assigned_identifiers))}` : ''}</td>
             <td class="qty">${t.quantity}</td>
           </tr>`;
       }).join('')
-    : `<tr><td colspan="4" class="empty-msg" style="text-align:center">履歴なし</td></tr>`;
+    : `<tr><td colspan="5" class="empty-msg" style="text-align:center">履歴なし</td></tr>`;
 
   view.innerHTML = `
     <div class="detail-hero">
@@ -439,6 +558,7 @@ routes.detail = async ({ id }) => {
         種別：${escape(getItemTypeLabel(item))}<br>
         別名：${escape(ItemSearch.formatAliases(item.aliases) || '-')}<br>
         団体上限：${escape(item.organization_quantity_limit || '-')}<br>
+        個体識別：${item.tracking_enabled ? escape(identifierRangeLabel(item)) : 'OFF'}<br>
         保管場所：${escape(item.storage_location || '-')}<br>
         備考：${escape(item.note || '-')}
       </div>
@@ -460,6 +580,17 @@ routes.detail = async ({ id }) => {
       <h3>現在の貸出内訳</h3>
       <table class="kv-table">${breakdownRows}</table>
     </div>
+
+    ${item.tracking_enabled ? `
+      <div class="section">
+        <h3>貸出中の識別番号</h3>
+        ${(item.identifier_assignments || []).length
+          ? `<table class="kv-table">${item.identifier_assignments.map(assignment => `
+              <tr><td>${escape(assignment.target)}</td><td>${escape(formatIdentifiers(assignment.identifiers))}</td></tr>
+            `).join('')}</table>`
+          : '<div class="empty-msg">貸出中の番号はありません</div>'}
+      </div>
+    ` : ''}
 
     <div class="section">
       <h3>履歴</h3>
@@ -599,6 +730,7 @@ routes.requests = async () => {
           ${isPurchaseRequest(r)
             ? `備考：${escape(r.purchase_note || '-' )}`
             : `用途：${escape(r.purpose)}`}
+          ${r.assigned_identifiers?.length ? `<br>識別番号：${escape(formatIdentifiers(r.assigned_identifiers))}` : ''}
         </div>
         ${renderActionButtons(r) ?
           `<div class="actions">${renderActionButtons(r)}</div>` : ''}
@@ -620,7 +752,7 @@ routes.requests = async () => {
             return;
           }
           b.disabled = true;
-          const res = await performAction(act, id);
+          const res = await performAction(act, id, r);
           b.disabled = false;
           if (res === null) return;
           if (res.error) { showToast('エラー: ' + res.error); return; }
@@ -689,6 +821,7 @@ routes.reqDetail = async ({ id }) => {
           <tr>
             <td class="date">${fmt(t.timestamp)}</td>
             <td><span class="tag ${t.type}">${t.type === 'lend' ? '貸出' : t.type === 'return' ? '返却' : '消耗'}</span></td>
+            <td>${t.assigned_identifiers?.length ? `識別番号 ${escape(formatIdentifiers(t.assigned_identifiers))}` : ''}</td>
             <td class="qty">${t.quantity}</td>
           </tr>`).join('')
       }</table>`
@@ -719,7 +852,8 @@ routes.reqDetail = async ({ id }) => {
             <tr><td>承認後種別</td><td>${escape(r.approved_item_type ? getRequestItemTypeLabel({ ...r, approved_item_type: r.approved_item_type, request_type: 'purchase' }) : '-')}</td></tr>
             <tr><td>承認後保管場所</td><td>${escape(r.approved_storage_location || '-')}</td></tr>
           `
-          : `<tr><td>用途</td><td>${escape(r.purpose)}</td></tr>`}
+          : `<tr><td>用途</td><td>${escape(r.purpose)}</td></tr>
+             <tr><td>識別番号</td><td>${r.assigned_identifiers?.length ? escape(formatIdentifiers(r.assigned_identifiers)) : (r.tracking_enabled ? '受け渡し時に選択' : '-')}</td></tr>`}
         <tr><td>管理者コメント</td><td>${escape(r.memo || '-')}</td></tr>
       </table>
     </div>
@@ -746,7 +880,7 @@ routes.reqDetail = async ({ id }) => {
         return;
       }
       b.disabled = true;
-      const res = await performAction(act, r.id);
+      const res = await performAction(act, r.id, r);
       b.disabled = false;
       if (res === null) return;
       if (res.error) { showToast('エラー: ' + res.error); return; }
@@ -780,6 +914,7 @@ routes.approvePurchase = async ({ id }) => {
     item_type: requestData.approved_item_type || requestData.purchase_item_type || 'equipment',
     total_quantity: requestData.approved_quantity || requestData.quantity || 0,
     organization_quantity_limit: '',
+    tracking_enabled: false,
     aliases: '',
     storage_location: requestData.approved_storage_location || requestData.purchase_storage_location || '',
     note: requestData.approved_note || requestData.purchase_note || '',
@@ -829,6 +964,8 @@ routes.approvePurchase = async ({ id }) => {
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="1" required value="${approvedDraft.total_quantity}" />
 
+      ${trackingFieldHtml(approvedDraft.tracking_enabled)}
+
       <label>団体ごとの最大貸出数（任意）</label>
       <input name="organization_quantity_limit" type="number" min="1" inputmode="numeric" value="${escape(approvedDraft.organization_quantity_limit || '')}" placeholder="未入力なら制限なし" />
 
@@ -853,6 +990,7 @@ routes.approvePurchase = async ({ id }) => {
   const form = view.querySelector('#approvePurchaseForm');
   bindSelectableField(form, 'category', 'categoryNew');
   bindSelectableField(form, 'storage_location', 'storageLocationNew');
+  bindTrackingField(form);
 
   const fileInput = view.querySelector('#imgFile');
   const preview = view.querySelector('#imgPreview');
@@ -908,6 +1046,7 @@ routes.approvePurchase = async ({ id }) => {
       item_type: form.item_type.value,
       total_quantity: Number(form.total_quantity.value),
       organization_quantity_limit: form.organization_quantity_limit.value ? Number(form.organization_quantity_limit.value) : '',
+      tracking_enabled: form.tracking_enabled.checked,
       aliases: ItemSearch.formatAliases(form.aliases.value),
       storage_location: storageLocation,
       note: form.note.value.trim(),
@@ -988,6 +1127,8 @@ routes.add = async () => {
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="0" required inputmode="numeric" placeholder="例) 100" />
 
+      ${trackingFieldHtml(false)}
+
       <label>団体ごとの最大貸出数</label>
       <input name="organization_quantity_limit" type="number" min="1" inputmode="numeric" placeholder="未入力なら制限なし" />
 
@@ -1009,6 +1150,7 @@ routes.add = async () => {
   const f = view.querySelector('#addForm');
   bindSelectableField(f, 'category', 'categoryNew');
   bindSelectableField(f, 'storage_location', 'storageLocationNew');
+  bindTrackingField(f);
 
   // 画像ピッカー
   const fileInput = view.querySelector('#imgFile');
@@ -1061,6 +1203,7 @@ routes.add = async () => {
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
       organization_quantity_limit: f.organization_quantity_limit.value ? Number(f.organization_quantity_limit.value) : '',
+      tracking_enabled: f.tracking_enabled.checked,
       aliases: ItemSearch.formatAliases(f.aliases.value),
       storage_location: storageLocation,
       note: f.note.value.trim(),
@@ -1131,6 +1274,8 @@ routes.editItem = async ({ id }) => {
       <label>総数<span class="req">*</span></label>
       <input name="total_quantity" type="number" min="0" required value="${item.total_quantity}" />
 
+      ${trackingFieldHtml(item.tracking_enabled)}
+
       <label>団体ごとの最大貸出数</label>
       <input name="organization_quantity_limit" type="number" min="1" inputmode="numeric" value="${escape(item.organization_quantity_limit || '')}" placeholder="未入力なら制限なし" />
 
@@ -1152,6 +1297,7 @@ routes.editItem = async ({ id }) => {
   const f = view.querySelector('#editForm');
   bindSelectableField(f, 'category', 'categoryNew');
   bindSelectableField(f, 'storage_location', 'storageLocationNew');
+  bindTrackingField(f, item.identifier_width);
 
   // 画像ピッカー（既存画像をプリセット）
   const fileInput = view.querySelector('#imgFile');
@@ -1206,6 +1352,7 @@ routes.editItem = async ({ id }) => {
       item_type: f.item_type.value,
       total_quantity: Number(f.total_quantity.value),
       organization_quantity_limit: f.organization_quantity_limit.value ? Number(f.organization_quantity_limit.value) : '',
+      tracking_enabled: f.tracking_enabled.checked,
       aliases: ItemSearch.formatAliases(f.aliases.value),
       storage_location: storageLocation,
       note: f.note.value.trim(),
@@ -1219,6 +1366,7 @@ routes.editItem = async ({ id }) => {
     if (r.error) { showToast('エラー: ' + r.error); return; }
     showToast('更新しました');
     invalidateItems();
+    invalidateRequests();
     State.storageLocations = [];
     go('detail', { id: item.id });
   });
@@ -1232,7 +1380,7 @@ routes.log = async () => {
   setTabActive('');
   view.innerHTML = `
     <div class="search-bar">
-      <div class="search-icon" style="flex:1;display:flex"><input id="lq" placeholder="物品名・団体名・利用者名で検索" /></div>
+      <div class="search-icon" style="flex:1;display:flex"><input id="lq" placeholder="物品名・団体名・利用者名・識別番号で検索" /></div>
       <select id="lt">
         <option value="">すべての種類</option>
         <option value="lend">貸出</option>
@@ -1249,7 +1397,7 @@ routes.log = async () => {
     const t = view.querySelector('#lt').value;
     const filtered = logs.filter(l =>
       (!t || l.type === t) &&
-      (!q || (l.item_name || '').includes(q) || (l.target || '').includes(q))
+      (!q || (l.item_name || '').includes(q) || (l.target || '').includes(q) || formatIdentifiers(l.assigned_identifiers).includes(q))
     );
     if (!filtered.length) { listEl.innerHTML = '<div class="empty">履歴なし</div>'; return; }
     listEl.innerHTML = filtered.map(l => `
@@ -1257,7 +1405,10 @@ routes.log = async () => {
         <div class="ic"><span class="tag ${l.type}">${l.type === 'lend' ? '貸出' : l.type === 'return' ? '返却' : '消耗'}</span></div>
         <div class="body">
           <div class="ttl">${escape(l.item_name)} ×${l.quantity}</div>
-          <div class="meta">${escape(l.target || '')}</div>
+          <div class="meta">
+            ${escape(l.target || '')}
+            ${l.assigned_identifiers?.length ? `<br>識別番号：${escape(formatIdentifiers(l.assigned_identifiers))}` : ''}
+          </div>
         </div>
         <div class="time">${fmt(l.timestamp)}</div>
       </div>

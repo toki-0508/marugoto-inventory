@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#2563eb" />
   <title>まるごと祭 物品管理</title>
   <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="stylesheet" href="./css/style.css" />
+  <link rel="stylesheet" href="./css/style.css?v=20261020-1" />
 </head>
 <body>
   <header class="app-header">
@@ -46,12 +46,25 @@
     </div>
   </div>
 
+  <div class="comment-modal" id="identifierModal" role="dialog" aria-modal="true" aria-labelledby="identifierModalTitle" hidden style="display:none">
+    <div class="comment-modal-card identifier-modal-card">
+      <h3 id="identifierModalTitle">貸し出す識別番号を選択</h3>
+      <p id="identifierModalDesc" class="cm-desc"></p>
+      <div id="identifierGrid" class="identifier-grid"></div>
+      <p id="identifierCount" class="identifier-count" aria-live="polite"></p>
+      <div class="comment-modal-actions">
+        <button type="button" id="identifierCancel">キャンセル</button>
+        <button type="button" id="identifierConfirm" class="primary">受け渡し完了</button>
+      </div>
+    </div>
+  </div>
+
   <script src="./js/config.js"></script>
   <script src="./js/config.local.js"></script>
-  <script src="./js/api.js?v=20261020-1"></script>
+  <script src="./js/api.js?v=20261020-2"></script>
   <script src="./js/item-images.js?v=20261020-1"></script>
   <script src="./js/search.js?v=20261020-1"></script>
-  <script src="./js/app.js?v=20261020-2"></script>
+  <script src="./js/app.js?v=20261020-3"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(()=>{});

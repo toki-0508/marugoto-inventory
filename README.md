@@ -13,6 +13,7 @@
 - 物品ごとに `物品` / `電子機器` / `消耗品` を設定できる
 - 物品ごとに団体単位の最大貸出数を任意設定できる
 - 物品ごとに別名を任意登録でき、検索時は別名でもヒットする
+- 個体管理を有効にした物品は自動採番された識別番号を受け渡し時に選択でき、返却まで二重貸出を防止
 - 商品画像のアップロード対応
 - 一覧の基本情報を先に表示し、商品画像は画面内のものから遅延読み込み
 - PWA としてホーム画面に追加可能
@@ -38,19 +39,21 @@ gas/Code.gs             Apps Script バックエンド
 新規のスプレッドシートに 4 つのシートをヘッダ付きで作る。
 
 **items**
-| A: id | B: name | C: category | D: item_type | E: total_quantity | F: organization_quantity_limit | G: storage_location | H: note | I: image | J: aliases |
+| A: id | B: name | C: category | D: item_type | E: total_quantity | F: organization_quantity_limit | G: storage_location | H: note | I: image | J: aliases | K: tracking_enabled | L: identifier_width |
 
 - `item_type` には `物品` / `電子機器` / `消耗品` を入れる
 - 互換のため `equipment` / `electronics` / `consumable` でも動作する
 - `電子機器` は取扱注意品として分類するための種別で、貸出・返却の扱いは `物品` と同じ
 - `organization_quantity_limit` は任意。入力時は同一団体が同時に確保できる最大数として扱う
 - `aliases` は任意。カンマ区切りまたは改行区切りで複数登録できる
+- `tracking_enabled` は個体識別番号を使う物品のみ `TRUE`。番号は総数から自動生成される
+- `identifier_width` は識別番号の桁数。初回ON時に自動設定され、既存ラベルを変えないため以後保持される
 
 **transactions**
-| A: id | B: item_id | C: type | D: quantity | E: target | F: timestamp | G: memo |
+| A: id | B: item_id | C: type | D: quantity | E: target | F: timestamp | G: memo | H: assigned_identifiers |
 
 **requests**
-| A: id | B: item_id | C: item_name | D: quantity | E: organization | F: user_name | G: purpose | H: status | I: created_at | J: processed_at | K: memo | L: email | M: request_type | N: purchase_name | O: purchase_image | P: purchase_note | Q: purchase_item_type | R: purchase_storage_location | S: approved_item_name | T: approved_category | U: approved_item_type | V: approved_quantity | W: approved_storage_location | X: approved_note | Y: approved_image |
+| A: id | B: item_id | C: item_name | D: quantity | E: organization | F: user_name | G: purpose | H: status | I: created_at | J: processed_at | K: memo | L: email | M: request_type | N: purchase_name | O: purchase_image | P: purchase_note | Q: purchase_item_type | R: purchase_storage_location | S: approved_item_name | T: approved_category | U: approved_item_type | V: approved_quantity | W: approved_storage_location | X: approved_note | Y: approved_image | Z: assigned_identifiers |
 
 **storage_locations**
 | A: id | B: name | C: created_at |
