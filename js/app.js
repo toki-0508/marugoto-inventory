@@ -106,6 +106,7 @@ const ITEM_TYPE_OPTIONS = [
   { value: 'electronics', label: '電子機器' },
   { value: 'consumable', label: '消耗品' },
 ];
+const DEFAULT_CATEGORY_OPTIONS = ['電子機械', '消耗品', '生活用品'];
 const ITEM_TYPE_LABELS = Object.fromEntries(ITEM_TYPE_OPTIONS.map(option => [option.value, option.label]));
 const normalizeItemType = value => {
   const raw = String(value || '').trim();
@@ -147,6 +148,10 @@ const buildSelectableOptions = (values, currentValue = '') => {
   }
   return options;
 };
+const categoryOptions = currentValue => buildSelectableOptions(
+  [...DEFAULT_CATEGORY_OPTIONS, ...State.items.map(item => item.category)],
+  currentValue
+);
 const storageLocationOptions = currentValue => buildSelectableOptions(State.storageLocations, currentValue);
 const bindSelectableField = (form, selectName, newInputName) => {
   const select = form.elements[selectName];
@@ -920,7 +925,7 @@ routes.approvePurchase = async ({ id }) => {
     note: requestData.approved_note || requestData.purchase_note || '',
     image: requestData.approved_image || requestData.purchase_image || '',
   };
-  const cats = buildSelectableOptions(State.items.map(i => i.category), approvedDraft.category);
+  const cats = categoryOptions(approvedDraft.category);
   const storageLocations = storageLocationOptions(approvedDraft.storage_location);
 
   view.innerHTML = `
@@ -1089,7 +1094,7 @@ routes.add = async () => {
 
   await loadItems();
   await ensureStorageLocations();
-  const cats = buildSelectableOptions(State.items.map(i => i.category));
+  const cats = categoryOptions();
   const storageLocations = storageLocationOptions();
 
   view.innerHTML = `
@@ -1236,7 +1241,7 @@ routes.editItem = async ({ id }) => {
   const { item, error } = await Api.getItemDetail(id);
   if (error || !item) { view.innerHTML = `<div class="empty">読み込みに失敗</div>`; return; }
 
-  const cats = buildSelectableOptions(State.items.map(i => i.category), item.category);
+  const cats = categoryOptions(item.category);
   const storageLocations = storageLocationOptions(item.storage_location);
 
   view.innerHTML = `

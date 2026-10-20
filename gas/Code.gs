@@ -35,6 +35,7 @@ const REQ_SHEET = 'requests';
 const STORAGE_LOCATIONS_SHEET = 'storage_locations';
 const ACTIVE_RESERVATION_STATUSES = { pending: true, ready: true };
 const ITEM_TYPE_LABELS = { equipment: '物品', electronics: '電子機器', consumable: '消耗品' };
+const DEFAULT_CATEGORY_BY_ITEM_TYPE = { equipment: '生活用品', electronics: '電子機械', consumable: '消耗品' };
 
 function _normalizeItemType(value) {
   const raw = String(value || '').trim();
@@ -43,6 +44,21 @@ function _normalizeItemType(value) {
   if (raw === 'electronics' || raw === '電子機器') return 'electronics';
   if (raw === 'equipment' || raw === '物品') return 'equipment';
   return 'equipment';
+}
+
+function _defaultCategoryForItemType(itemType) {
+  return DEFAULT_CATEGORY_BY_ITEM_TYPE[_normalizeItemType(itemType)] || DEFAULT_CATEGORY_BY_ITEM_TYPE.equipment;
+}
+
+function _inventoryQuantities(totalQuantity, reservedQuantity, lentQuantity, returnedQuantity) {
+  const total = Math.max(0, Number(totalQuantity) || 0);
+  const reserved = Math.max(0, Number(reservedQuantity) || 0);
+  const lent = Math.max(0, (Number(lentQuantity) || 0) - (Number(returnedQuantity) || 0));
+  return {
+    current: Math.max(0, total - reserved - lent),
+    reserved,
+    lent,
+  };
 }
 
 function _toBoolean(value) {
@@ -281,37 +297,62 @@ function _ensureStorageLocationColumn(sheet) {
 
 function _ensureItemTypeColumn(sheet) {
   const headers = _headerMap(sheet);
-  const categoryCol = headers.category || 3;
-  const desiredCol = categoryCol + 1;
-  const lastRow = sheet.getLastRow();
   const existingCol = headers.item_type || 0;
+  if (existingCol) return existingCol;
 
-  if (existingCol === desiredCol) return existingCol;
-
-  if (existingCol) {
-    const values = lastRow > 0 ? sheet.getRange(1, existingCol, lastRow, 1).getValues() : [['item_type']];
-    sheet.insertColumnAfter(categoryCol);
-    sheet.getRange(1, desiredCol, values.length, 1).setValues(values).setFontWeight('bold');
-    const deleteCol = existingCol >= desiredCol ? existingCol + 1 : existingCol;
-    sheet.deleteColumn(deleteCol);
-    return desiredCol;
-  }
-
-  const currentLastCol = sheet.getLastColumn();
-  const headerAtDesired = desiredCol <= currentLastCol
-    ? String(sheet.getRange(1, desiredCol).getValues()[0][0] || '').trim()
-    : '';
-
-  if (headerAtDesired) {
-    sheet.insertColumnAfter(categoryCol);
-  }
-
-  sheet.getRange(1, desiredCol).setValue('item_type').setFontWeight('bold');
+  // Header-based lookups make column order irrelevant. Append-only migration avoids
+  // deleting or shifting existing data when a legacy sheet uses a different order.
+  const targetCol = sheet.getLastColumn() + 1;
+  const lastRow = sheet.getLastRow();
+  sheet.getRange(1, targetCol).setValue('item_type').setFontWeight('bold');
   if (lastRow >= 2) {
     const defaults = Array.from({ length: lastRow - 1 }, () => ['物品']);
-    sheet.getRange(2, desiredCol, defaults.length, 1).setValues(defaults);
+    sheet.getRange(2, targetCol, defaults.length, 1).setValues(defaults);
   }
-  return desiredCol;
+  return targetCol;
+}
+
+function _ensureSheetHeaders(sheet, headers) {
+  const lastCol = sheet.getLastColumn();
+  if (lastCol === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+  } else {
+    const currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0]
+      .map(value => String(value || '').trim());
+    const occupiedHeaders = new Set(currentHeaders.filter(Boolean));
+    headers.forEach(header => {
+      if (occupiedHeaders.has(header)) return;
+      const targetCol = sheet.getLastColumn() + 1;
+      sheet.getRange(1, targetCol).setValue(header).setFontWeight('bold');
+      occupiedHeaders.add(header);
+    });
+  }
+
+  if (sheet.getFrozenRows && sheet.getFrozenRows() < 1) {
+    sheet.setFrozenRows(1);
+  }
+}
+
+function _backfillMissingItemCategories(sheet) {
+  const cols = _itemColumns(sheet);
+  const lastRow = sheet.getLastRow();
+  if (!cols.category || !cols.item_type || lastRow < 2) return 0;
+
+  const rowCount = lastRow - 1;
+  const categoryValues = sheet.getRange(2, cols.category, rowCount, 1).getValues();
+  const itemTypeValues = sheet.getRange(2, cols.item_type, rowCount, 1).getValues();
+  let updatedCount = 0;
+
+  for (let i = 0; i < rowCount; i++) {
+    if (String(categoryValues[i][0] || '').trim()) continue;
+    categoryValues[i][0] = _defaultCategoryForItemType(itemTypeValues[i][0]);
+    updatedCount++;
+  }
+
+  if (updatedCount > 0) {
+    sheet.getRange(2, cols.category, rowCount, 1).setValues(categoryValues);
+  }
+  return updatedCount;
 }
 
 function _prepareItemColumns(sheet) {
@@ -337,7 +378,7 @@ function _itemFromRow(row, cols) {
   return {
     id: _cell(row, cols.id, ''),
     name: String(_cell(row, cols.name, '') || ''),
-    category: String(_cell(row, cols.category, '') || ''),
+    category: String(_cell(row, cols.category, '') || '').trim() || _defaultCategoryForItemType(itemType),
     item_type: itemType,
     item_type_label: ITEM_TYPE_LABELS[itemType] || ITEM_TYPE_LABELS.equipment,
     total_quantity: totalQuantity,
@@ -606,37 +647,16 @@ function setupSheets() {
   const ensure = (name, headers) => {
     let s = ss.getSheetByName(name);
     if (!s) s = ss.insertSheet(name);
-    const lastCol = s.getLastColumn();
-    if (lastCol === 0) {
-      s.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
-      s.setFrozenRows(1);
-      return;
-    }
-
-    const current = s.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v || '').trim());
-    const occupied = new Set(current.filter(Boolean));
-    const blanks = [];
-    for (let i = 0; i < current.length; i++) {
-      if (!current[i]) blanks.push(i + 1);
-    }
-
-    headers.forEach(header => {
-      if (occupied.has(header)) return;
-      const targetCol = blanks.length ? blanks.shift() : s.getLastColumn() + 1;
-      s.getRange(1, targetCol).setValue(header).setFontWeight('bold');
-      occupied.add(header);
-    });
-
-    if (s.getFrozenRows && s.getFrozenRows() < 1) {
-      s.setFrozenRows(1);
-    }
+    _ensureSheetHeaders(s, headers);
   };
   ensure(ITEMS_SHEET, ['id', 'name', 'category', 'item_type', 'total_quantity', 'organization_quantity_limit', 'storage_location', 'note', 'image', 'aliases', 'tracking_enabled', 'identifier_width']);
-  _ensureItemTypeColumn(_sheet(ITEMS_SHEET));
-  _ensureStorageLocationColumn(_sheet(ITEMS_SHEET));
-  _ensureOrganizationQuantityLimitColumn(_sheet(ITEMS_SHEET));
-  _ensureAliasesColumn(_sheet(ITEMS_SHEET));
-  _ensureItemTrackingColumns(_sheet(ITEMS_SHEET));
+  const itemSheet = _sheet(ITEMS_SHEET);
+  _ensureItemTypeColumn(itemSheet);
+  _ensureStorageLocationColumn(itemSheet);
+  _ensureOrganizationQuantityLimitColumn(itemSheet);
+  _ensureAliasesColumn(itemSheet);
+  _ensureItemTrackingColumns(itemSheet);
+  _backfillMissingItemCategories(itemSheet);
   ensure(TX_SHEET,    ['id', 'item_id', 'type', 'quantity', 'target', 'timestamp', 'memo', 'assigned_identifiers']);
   ensure(REQ_SHEET, _requestHeaders());
   ensure(STORAGE_LOCATIONS_SHEET, ['id', 'name', 'created_at']);
@@ -667,14 +687,15 @@ function getItems() {
   const result = [];
   for (let i = 1; i < items.length; i++) {
     const item = _itemFromRow(items[i], itemCols);
-    if (!item.id) continue;
+    if (!item.id || !item.name.trim()) continue;
     const s = stock[item.id] || { lent: 0, ret: 0 };
     const reserved = reservations[item.id] ? reservations[item.id].reserved : 0;
+    const quantities = _inventoryQuantities(item.total_quantity, reserved, s.lent, s.ret);
     result.push({
       ...item,
-      current_quantity: item.total_quantity - reserved - s.lent + s.ret,
-      reserved_quantity: reserved,
-      lent_quantity: s.lent - s.ret,
+      current_quantity: quantities.current,
+      reserved_quantity: quantities.reserved,
+      lent_quantity: quantities.lent,
     });
   }
   return { items: result };
@@ -748,9 +769,10 @@ function getItemDetail(itemId) {
   }
 
   const reservation = reservations[itemId] || { reserved: 0, breakdown: {} };
-  item.current_quantity = item.total_quantity - reservation.reserved - lent + ret;
-  item.reserved_quantity = reservation.reserved;
-  item.lent_quantity = lent - ret;
+  const quantities = _inventoryQuantities(item.total_quantity, reservation.reserved, lent, ret);
+  item.current_quantity = quantities.current;
+  item.reserved_quantity = quantities.reserved;
+  item.lent_quantity = quantities.lent;
   item.transactions = transactions.reverse();
   item.breakdown = Object.keys(map)
     .filter(k => map[k] > 0)

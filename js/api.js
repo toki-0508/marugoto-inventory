@@ -79,6 +79,16 @@ const Mock = (() => {
   const nextRequestId = () => requests.length ? requests[requests.length - 1].id + 1 : 1;
   const nextStorageLocationId = () => storageLocations.length ? storageLocations[storageLocations.length - 1].id + 1 : 1;
   const isConsumable = item => item && normalizeItemType(item.item_type) === 'consumable';
+  const inventoryQuantities = (totalQuantity, reservedQuantity, lentQuantity, returnedQuantity) => {
+    const total = Math.max(0, Number(totalQuantity) || 0);
+    const reserved = Math.max(0, Number(reservedQuantity) || 0);
+    const lent = Math.max(0, (Number(lentQuantity) || 0) - (Number(returnedQuantity) || 0));
+    return {
+      current: Math.max(0, total - reserved - lent),
+      reserved,
+      lent,
+    };
+  };
   const normalizeStorageLocationName = value => String(value || '').trim();
   const upsertStorageLocation = value => {
     const name = normalizeStorageLocationName(value);
@@ -130,15 +140,16 @@ const Mock = (() => {
 
   return {
     getItems: () => Promise.resolve({
-      items: items.map(it => {
+      items: items.filter(it => String(it.name || '').trim()).map(it => {
         const { lent, ret } = calcLending(it.id);
         const { reserved } = calcReserved(it.id);
+        const quantities = inventoryQuantities(it.total_quantity, reserved, lent, ret);
         const { image: _image, ...itemWithoutImage } = it;
         return {
           ...itemWithoutImage,
-          current_quantity: it.total_quantity - reserved - lent + ret,
-          reserved_quantity: reserved,
-          lent_quantity: lent - ret,
+          current_quantity: quantities.current,
+          reserved_quantity: quantities.reserved,
+          lent_quantity: quantities.lent,
         };
       })
     }),
@@ -161,12 +172,13 @@ const Mock = (() => {
         map[t.target] = (map[t.target] || 0) + (t.type === 'lend' ? t.quantity : -t.quantity);
       });
       const { reserved, breakdown: reservedBreakdown } = calcReserved(id);
+      const quantities = inventoryQuantities(it.total_quantity, reserved, lent, ret);
       return Promise.resolve({
         item: {
           ...it,
-          current_quantity: it.total_quantity - reserved - lent + ret,
-          reserved_quantity: reserved,
-          lent_quantity: lent - ret,
+          current_quantity: quantities.current,
+          reserved_quantity: quantities.reserved,
+          lent_quantity: quantities.lent,
           transactions: [...myTx].reverse(),
           breakdown: Object.entries(map).filter(([,q]) => q > 0).map(([target, quantity]) => ({ target, quantity })),
           reserved_breakdown: reservedBreakdown,

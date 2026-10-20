@@ -84,6 +84,25 @@ async function run() {
   assert.equal(largeItemDetail.item.available_identifiers[0], '001');
   assert.equal(largeItemDetail.item.available_identifiers.at(-1), '120');
 
+  const inconsistentHistoryItem = await Api.addItem({
+    name: '履歴補正テスト',
+    category: '生活用品',
+    item_type: 'equipment',
+    total_quantity: 5,
+  });
+  await Api.addTransaction({
+    item_id: inconsistentHistoryItem.id,
+    type: 'return',
+    quantity: 4,
+    target: '履歴補正',
+  });
+  const correctedItem = await Api.getItemDetail(inconsistentHistoryItem.id);
+  assert.equal(correctedItem.item.lent_quantity, 0);
+  assert.equal(correctedItem.item.current_quantity, 5);
+  const correctedListItem = (await Api.getItems()).items.find(item => item.id === inconsistentHistoryItem.id);
+  assert.equal(correctedListItem.lent_quantity, 0);
+  assert.equal(correctedListItem.current_quantity, 5);
+
   console.log('tracking tests passed');
 }
 
