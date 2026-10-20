@@ -68,8 +68,10 @@
     ['カメラ', '📷'], ['ライト', '💡'], ['段ボール', '📦'],
   ];
   const pickIcon = (name = '', category = '') => {
+    const normalizedName = String(name || '');
+    const normalizedCategory = String(category || '');
     for (const [k, v] of ICON_RULES) {
-      if (name.includes(k) || category.includes(k)) return v;
+      if (normalizedName.includes(k) || normalizedCategory.includes(k)) return v;
     }
     return '📦';
   };

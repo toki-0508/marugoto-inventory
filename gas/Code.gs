@@ -274,16 +274,16 @@ function _itemFromRow(row, cols) {
     : (Number(organizationQuantityLimitRaw) || '');
   return {
     id: _cell(row, cols.id, ''),
-    name: _cell(row, cols.name, ''),
-    category: _cell(row, cols.category, ''),
+    name: String(_cell(row, cols.name, '') || ''),
+    category: String(_cell(row, cols.category, '') || ''),
     item_type: itemType,
     item_type_label: ITEM_TYPE_LABELS[itemType] || ITEM_TYPE_LABELS.equipment,
     total_quantity: totalQuantity,
     organization_quantity_limit: organizationQuantityLimit,
-    storage_location: _cell(row, cols.storage_location, '') || '',
-    note: _cell(row, cols.note, '') || '',
-    image: _cell(row, cols.image, '') || '',
-    aliases: _cell(row, cols.aliases, '') || ''
+    storage_location: String(_cell(row, cols.storage_location, '') || ''),
+    note: String(_cell(row, cols.note, '') || ''),
+    image: String(_cell(row, cols.image, '') || ''),
+    aliases: String(_cell(row, cols.aliases, '') || '')
   };
 }
 
