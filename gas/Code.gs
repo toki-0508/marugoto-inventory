@@ -35,7 +35,6 @@ const REQ_SHEET = 'requests';
 const STORAGE_LOCATIONS_SHEET = 'storage_locations';
 const ACTIVE_RESERVATION_STATUSES = { pending: true, ready: true };
 const ITEM_TYPE_LABELS = { equipment: '物品', electronics: '電子機器', consumable: '消耗品' };
-const DEFAULT_CATEGORY_BY_ITEM_TYPE = { equipment: '生活用品', electronics: '電子機械', consumable: '消耗品' };
 
 function _normalizeItemType(value) {
   const raw = String(value || '').trim();
@@ -44,10 +43,6 @@ function _normalizeItemType(value) {
   if (raw === 'electronics' || raw === '電子機器') return 'electronics';
   if (raw === 'equipment' || raw === '物品') return 'equipment';
   return 'equipment';
-}
-
-function _defaultCategoryForItemType(itemType) {
-  return DEFAULT_CATEGORY_BY_ITEM_TYPE[_normalizeItemType(itemType)] || DEFAULT_CATEGORY_BY_ITEM_TYPE.equipment;
 }
 
 function _inventoryQuantities(totalQuantity, reservedQuantity, lentQuantity, returnedQuantity) {
@@ -356,7 +351,7 @@ function _itemFromRow(row, cols) {
   return {
     id: _cell(row, cols.id, ''),
     name: String(_cell(row, cols.name, '') || ''),
-    category: String(_cell(row, cols.category, '') || '').trim() || _defaultCategoryForItemType(itemType),
+    category: String(_cell(row, cols.category, '') || '').trim(),
     item_type: itemType,
     item_type_label: ITEM_TYPE_LABELS[itemType] || ITEM_TYPE_LABELS.equipment,
     total_quantity: totalQuantity,

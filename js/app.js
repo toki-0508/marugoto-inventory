@@ -107,15 +107,13 @@ const ITEM_TYPE_OPTIONS = [
   { value: 'consumable', label: '消耗品' },
 ];
 const DEFAULT_CATEGORY_OPTIONS = [
-  '電子機械',
-  '消耗品',
+  '電子機器',
   '生活用品',
   '雑貨',
   '工具',
   '教具',
   '楽器',
   'カトラリー',
-  '物品',
   '学校備品',
   '寮',
 ];
@@ -502,7 +500,7 @@ routes.home = async () => {
           }</div>
           <div class="item-info">
             <div class="item-name">${escape(i.name)}</div>
-            <div class="item-cat">${escape(i.category || '')} / ${escape(getItemTypeLabel(i))}</div>
+            <div class="item-cat">${escape(i.category || '未分類')} / ${escape(getItemTypeLabel(i))}</div>
             ${i.aliases ? `<div class="item-note">別名：${escape(ItemSearch.formatAliases(i.aliases))}</div>` : ''}
             <div class="item-note">${i.storage_location ? '保管場所：' + escape(i.storage_location) : ''}</div>
             <div class="item-note">${i.organization_quantity_limit ? '団体上限：' + escape(i.organization_quantity_limit) + '個' : ''}</div>
