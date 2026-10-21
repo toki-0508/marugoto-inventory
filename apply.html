@@ -5,11 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#16a34a" />
   <title>物品申請フォーム</title>
-  <link rel="stylesheet" href="./css/style.css" />
+  <link rel="stylesheet" href="./css/style.css?v=20261021-1" />
 </head>
 <body>
   <header class="app-header">
+    <span class="header-side" aria-hidden="true"></span>
     <h1>物品申請フォーム</h1>
+    <button type="button" class="header-side header-text-btn" id="historyBtn">履歴</button>
   </header>
 
   <main id="view" style="padding-bottom: 24px">
@@ -89,6 +91,7 @@
       <h2>申請を受け付けました</h2>
       <p>申請内容は管理者が確認後、<br>順次対応いたします。</p>
       <button class="btn-primary green" id="again" style="margin-top:0">続けて申請する</button>
+      <button type="button" class="btn-outline" id="doneHistory">申請履歴を確認する</button>
     </div>
   </main>
 
@@ -106,11 +109,26 @@
     <div class="picker-list" id="pickerList"></div>
   </div>
 
+  <div class="picker-modal" id="historyModal" hidden style="display:none">
+    <div class="picker-header">
+      <h2>申請履歴</h2>
+      <button type="button" class="picker-close" id="historyClose" aria-label="閉じる">×</button>
+    </div>
+    <form class="history-search" id="historyForm">
+      <input name="organization" placeholder="団体名" />
+      <input name="name" placeholder="名前" />
+      <button type="submit" class="btn-primary green">検索</button>
+      <p class="history-hint">団体名か名前のどちらかだけでも検索できます</p>
+    </form>
+    <div class="history-results" id="historyResults"></div>
+  </div>
+
   <script src="./js/config.js"></script>
   <script src="./js/config.local.js"></script>
   <script src="./js/api.js?v=20261020-3"></script>
   <script src="./js/item-images.js?v=20261020-1"></script>
   <script src="./js/search.js?v=20261020-1"></script>
-  <script src="./js/apply.js?v=20261020-1"></script>
+  <script src="./js/request-history.js?v=20261021-1"></script>
+  <script src="./js/apply.js?v=20261021-1"></script>
 </body>
 </html>

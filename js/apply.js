@@ -507,6 +507,91 @@
     }
   });
 
+  const historyModal = document.getElementById('historyModal');
+  const historyForm = document.getElementById('historyForm');
+  const historyResults = document.getElementById('historyResults');
+  let historyRequestsPromise = null;
+  let historySearchGeneration = 0;
+
+  // パネルを開くたびに取り直すので、申請直後でも最新の状態が出る
+  const loadHistoryRequests = () => {
+    if (!historyRequestsPromise) {
+      const promise = Api.getRequests().then(res => {
+        if (res.error) throw new Error(res.error);
+        return res.requests || [];
+      });
+      promise.catch(() => {
+        if (historyRequestsPromise === promise) historyRequestsPromise = null;
+      });
+      historyRequestsPromise = promise;
+    }
+    return historyRequestsPromise;
+  };
+
+  const renderHistoryCards = matches => {
+    if (!matches.length) {
+      historyResults.innerHTML = '<div class="empty">該当する申請が見つかりませんでした。<br>団体名や名前の書き方を変えて試してください。</div>';
+      return;
+    }
+    historyResults.innerHTML = `<div class="history-count">${matches.length}件の申請が見つかりました</div>` + matches.map(r => `
+      <div class="req-card history-card">
+        <div class="top">
+          <span class="status status-${escape(r.status)}">${escape(RequestHistory.statusLabel(r.status))}</span>
+          <span class="ts">${escape(RequestHistory.formatDateTime(r.created_at))}</span>
+        </div>
+        <div class="title">${escape(RequestHistory.itemLabel(r))}</div>
+        <div class="info">
+          ${escape(r.organization)} / ${escape(r.user_name)}
+          ${r.assigned_identifiers?.length ? `<br>識別番号：${escape(r.assigned_identifiers.join(', '))}` : ''}
+          ${r.memo ? `<br>管理者メモ：${escape(r.memo)}` : ''}
+        </div>
+      </div>`).join('');
+  };
+
+  const runHistorySearch = async () => {
+    const generation = ++historySearchGeneration;
+    const query = { organization: historyForm.organization.value, name: historyForm.name.value };
+    if (!query.organization.trim() && !query.name.trim()) {
+      historyResults.innerHTML = '<div class="empty">団体名か名前を入力して検索してください</div>';
+      return;
+    }
+    historyResults.innerHTML = '<div class="empty">読み込み中…</div>';
+    try {
+      const requests = await loadHistoryRequests();
+      if (generation !== historySearchGeneration) return;
+      renderHistoryCards(RequestHistory.filter(requests, query));
+    } catch (error) {
+      if (generation !== historySearchGeneration) return;
+      historyResults.innerHTML = '<div class="empty">申請の取得に失敗しました<br><button type="button" class="history-retry" data-history-retry>再試行</button></div>';
+    }
+  };
+
+  const openHistory = () => {
+    historyRequestsPromise = null;
+    historyForm.organization.value = form.organization.value.trim();
+    historyForm.name.value = form.user_name.value.trim();
+    historyModal.hidden = false;
+    historyModal.style.display = 'flex';
+    runHistorySearch();
+  };
+
+  const closeHistory = () => {
+    historySearchGeneration++;
+    historyModal.hidden = true;
+    historyModal.style.display = 'none';
+  };
+
+  document.getElementById('historyBtn').addEventListener('click', openHistory);
+  document.getElementById('doneHistory').addEventListener('click', openHistory);
+  document.getElementById('historyClose').addEventListener('click', closeHistory);
+  historyForm.addEventListener('submit', e => {
+    e.preventDefault();
+    runHistorySearch();
+  });
+  historyResults.addEventListener('click', e => {
+    if (e.target.closest('[data-history-retry]')) runHistorySearch();
+  });
+
   const cachedItems = readCachedItems();
   if (cachedItems.length) {
     applyItems(cachedItems);
